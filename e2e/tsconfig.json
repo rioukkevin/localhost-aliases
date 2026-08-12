@@ -1,0 +1,9 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    // The fake helper runs under Bun; the specs and fixtures run under Node
+    // (Playwright's runner), so both sets of globals have to be in scope.
+    "types": ["bun", "node"]
+  },
+  "include": ["**/*.ts"]
+}

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The privileged helper, registered by the tray with
+  SMAppService.daemon(plistName: "dev.localhost-aliases.helper.plist").
+
+  Two rules make this work and are not stylistic:
+    * this file must live at Contents/Library/LaunchDaemons/ and its filename must be exactly
+      the plistName passed to SMAppService.daemon;
+    * BundleProgram is resolved relative to the .app bundle, so the executable must be inside
+      the same bundle (Contents/MacOS/la-helper).
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>dev.localhost-aliases.helper</string>
+	<key>BundleProgram</key>
+	<string>Contents/MacOS/la-helper</string>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<!-- Ties the daemon to this app in System Settings › Login Items, so the user sees one
+	     entry named after the app rather than a bare bundle id. -->
+	<key>AssociatedBundleIdentifiers</key>
+	<array>
+		<string>dev.localhost-aliases.tray</string>
+	</array>
+	<key>StandardOutPath</key>
+	<string>/var/log/localhost-aliases-helper.log</string>
+	<key>StandardErrorPath</key>
+	<string>/var/log/localhost-aliases-helper.log</string>
+	<key>ProcessType</key>
+	<string>Interactive</string>
+</dict>
+</plist>
