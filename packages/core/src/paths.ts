@@ -42,6 +42,28 @@ export function livenessPath(): string {
 export const LIVENESS_TIMEOUT_MS = 15_000;
 export const LIVENESS_TOUCH_MS = 5_000;
 
+/**
+ * The dashboard/tray request channel.
+ *
+ * A web page cannot raise a macOS admin prompt, and by design the dashboard never runs a
+ * privileged command. So a button click writes a REQUEST here; the tray polls it, runs the
+ * privileged work behind the one admin prompt, and writes the RESULT back. Two plain files
+ * in the user's own config dir — no port, no URL scheme, nothing to authenticate.
+ */
+export function applyRequestPath(): string {
+  return join(configDir(), "apply-request.json");
+}
+export function applyResultPath(): string {
+  return join(configDir(), "apply-result.json");
+}
+/** How often the tray checks for a new request. Just a stat, so it can be brisk. */
+export const APPLY_POLL_MS = 1_000;
+/**
+ * A request older than this is ignored rather than replayed — otherwise launching the app
+ * would re-run whatever was last asked for, raising a password prompt nobody asked for.
+ */
+export const APPLY_REQUEST_TTL_MS = 90_000;
+
 export function caDir(): string {
   return join(configDir(), "ca");
 }

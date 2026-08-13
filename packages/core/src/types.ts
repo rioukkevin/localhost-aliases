@@ -186,3 +186,37 @@ export interface Project {
 
 export const HOSTS_BEGIN = "# >>> localhost-aliases >>>";
 export const HOSTS_END = "# <<< localhost-aliases <<<";
+
+// ---------------------------------------------------------------------------
+// Dashboard -> tray request channel (see paths.applyRequestPath)
+// ---------------------------------------------------------------------------
+
+export type PrivilegedKind = "apply" | "uninstall";
+
+/** Written by the dashboard when the user clicks. The tray is the only reader. */
+export interface PrivilegedRequest {
+  id: string;
+  kind: PrivilegedKind;
+  requestedAt: string;
+}
+
+/** Written by the tray once the admin prompt has been answered, one per request id. */
+export interface PrivilegedResult {
+  id: string;
+  kind: PrivilegedKind;
+  ok: boolean;
+  /** True when the user dismissed the macOS password dialog. Not an error. */
+  cancelled: boolean;
+  error: string | null;
+  startedAt: string;
+  finishedAt: string;
+}
+
+/** What the dashboard shows while it waits. */
+export interface PrivilegedProgress {
+  state: "idle" | "pending" | "done";
+  /** False when the menu-bar app is not running, so nothing will ever pick the request up. */
+  trayAlive: boolean;
+  request: PrivilegedRequest | null;
+  result: PrivilegedResult | null;
+}

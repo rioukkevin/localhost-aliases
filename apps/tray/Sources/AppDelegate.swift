@@ -11,11 +11,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MenuAc
     private var dashboard: DashboardProcess!
     private var heartbeat: Heartbeat!
     private var poller: StatusPoller!
+    private var applyWatcher: ApplyRequestWatcher!
     private var signalSources: [DispatchSourceSignal] = []
 
     private var state = TrayState()
     private var isTerminating = false
-    private var hasOfferedLaunchApply = false
 
     // MARK: - Lifecycle
 
@@ -46,9 +46,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MenuAc
             self.state.system = snapshot
             self.state.aliasUp = statuses
             self.refreshIcon()
-            self.offerLaunchApplyIfDrifted()
         }
         poller.start()
+
+        // The dashboard cannot raise an admin prompt, so it asks us to. See
+        // ApplyRequestWatcher.swift; this is the only other way into runPrivileged.
+        applyWatcher = ApplyRequestWatcher(
+            log: log,
+            isBusy: { [weak self] in self?.state.privilegedBusy ?? true },
+            run: { [weak self] kind, completion in
+                guard let self else {
+                    completion(
+                        PrivilegedRunOutcome(ok: false, cancelled: false, output: "tray is shutting down"))
+                    return
+                }
+                self.runPrivileged(kind == .uninstall ? .uninstall : .apply) { result in
+                    completion(
+                        PrivilegedRunOutcome(
+                            ok: result.ok, cancelled: result.cancelled, output: result.output))
+                }
+            })
+        applyWatcher.start()
 
         installSignalHandlers()
         openDashboardOnFirstRun()
@@ -97,6 +115,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MenuAc
         guard !isTerminating else { return .terminateNow }
         isTerminating = true
         log.log("tray: shutting down")
+        applyWatcher?.stop()
         poller.stop()
         heartbeat.stop()  // removes the liveness file -> the root forwarder exits on its own
         dashboard.stop { NSApp.reply(toApplicationShouldTerminate: true) }
@@ -160,26 +179,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MenuAc
         NSApp.terminate(nil)
     }
 
-    /// docs/V2.md wants one prompt at launch when the live state has drifted (a reboot clears
-    /// the lo0 aliases). That would put a dialog on screen with nobody asking for it, so it is
-    /// opt-in: without LA_PROMPT_ON_LAUNCH_DRIFT the tray only turns the icon to "attention"
-    /// and waits for the user to pick Re-apply Aliases. Onboarding drives the first apply.
-    private func offerLaunchApplyIfDrifted() {
-        guard Paths.env("LA_PROMPT_ON_LAUNCH_DRIFT") != nil else { return }
-        guard !hasOfferedLaunchApply, !state.privilegedBusy else { return }
-        guard state.system.dashboardReachable, state.system.needsPrompt else { return }
-        hasOfferedLaunchApply = true
-        reapplyAliases(nil)
-    }
-
     // MARK: - Helpers
 
-    private func runPrivileged(_ kind: PrivilegedApply.Kind) {
+    /// The single entry to the admin prompt, shared by the two menu items and by the
+    /// dashboard's request channel. `completion` runs on the main thread before any
+    /// termination, so an uninstall still gets its result written to disk.
+    private func runPrivileged(
+        _ kind: PrivilegedApply.Kind,
+        completion: ((PrivilegedApply.Result) -> Void)? = nil
+    ) {
         state.privilegedBusy = true
         state.lastMessage = kind == .apply ? "Applying…" : "Uninstalling…"
         PrivilegedApply.run(layout: layout, kind: kind, log: log) { [weak self] result in
-            guard let self else { return }
+            guard let self else {
+                completion?(result)
+                return
+            }
             self.state.privilegedBusy = false
+            completion?(result)
             if result.ok {
                 self.state.lastMessage = nil
                 self.poller.refreshSoon()

@@ -7,7 +7,7 @@
 # `app` never deletes Contents/Resources: packages/build/bundle.sh fills that directory with
 # bun, the dashboard, the forwarder and privileged/, and the two steps must be order-independent.
 
-.PHONY: help build app clean
+.PHONY: help build app test clean
 
 VERSION   ?= 2.0.0
 NAME      := LocalhostAliases
@@ -18,6 +18,11 @@ DEPLOY    ?= 13.0
 SDK       := $(shell xcrun --show-sdk-path --sdk macosx)
 SOURCES   := $(wildcard Sources/*.swift)
 
+# The watcher harness links only the files it needs. PrivilegedApply.swift — the one file that
+# can raise a password dialog — is deliberately NOT in this list, so `make test` cannot prompt.
+TEST_SOURCES := Sources/Paths.swift Sources/Logger.swift Sources/ApplyRequestWatcher.swift \
+	tests/main.swift
+
 SWIFTFLAGS := -O -wmo \
 	-target arm64-apple-macos$(DEPLOY) \
 	-sdk $(SDK) \
@@ -27,6 +32,7 @@ SWIFTFLAGS := -O -wmo \
 help:
 	@echo "make build   compile $(BUILD)/$(NAME)"
 	@echo "make app     assemble $(APP)"
+	@echo "make test    build and run the ApplyRequestWatcher harness"
 	@echo "make clean   remove $(BUILD) and the app's MacOS payload"
 
 build: $(BUILD)/$(NAME)
@@ -42,6 +48,14 @@ app: build
 	@sed 's/@VERSION@/$(VERSION)/g' Info.plist > "$(APP)/Contents/Info.plist"
 	@printf 'APPL????' > "$(APP)/Contents/PkgInfo"
 	@echo "assembled $(APP) (Resources are filled by packages/build/bundle.sh)"
+
+test: $(BUILD)/watcher-tests
+	@$(BUILD)/watcher-tests
+
+$(BUILD)/watcher-tests: $(TEST_SOURCES)
+	@mkdir -p $(BUILD)
+	@swiftc -target arm64-apple-macos$(DEPLOY) -sdk $(SDK) -framework Foundation \
+		-o $@ $(TEST_SOURCES)
 
 clean:
 	@rm -rf $(BUILD)

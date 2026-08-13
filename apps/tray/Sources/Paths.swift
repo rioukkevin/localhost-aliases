@@ -25,6 +25,14 @@ enum Paths {
     static var forwarderStatusPath: String { "\(configDir)/forwarder-status.json" }
     static var livenessPath: String { "\(configDir)/liveness" }
 
+    /// Dashboard -> tray privileged request channel (paths.ts: applyRequestPath/applyResultPath).
+    static var applyRequestPath: String { "\(configDir)/apply-request.json" }
+    static var applyResultPath: String { "\(configDir)/apply-result.json" }
+    /// paths.ts: APPLY_POLL_MS (1s — it is only a stat plus a small read).
+    static let applyPollInterval: TimeInterval = 1
+    /// paths.ts: APPLY_REQUEST_TTL_MS. Anything older is a leftover, never a click.
+    static let applyRequestTtl: TimeInterval = 90
+
     static var logDir: String {
         env("LA_LOG_DIR") ?? "\(home)/Library/Logs/localhost-aliases"
     }

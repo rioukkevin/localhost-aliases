@@ -17,6 +17,8 @@
  *   POST   /api/onboarding             { action, ... }             -> OnboardingPayload
  *   PATCH  /api/settings               { tld?, dashboardPort?, https? } -> { config, restartRequired }
  *   POST   /api/apply                  (prepares only, never runs root work)
+ *   POST   /api/privileged/request     { kind }                    -> { request, trayAlive }
+ *   GET    /api/privileged/progress    ?id=…                       -> PrivilegedProgress
  */
 import type {
   Alias,
@@ -25,6 +27,9 @@ import type {
   CreateAliasInput,
   OnboardingStep,
   OnboardingStepId,
+  PrivilegedKind,
+  PrivilegedProgress,
+  PrivilegedRequest,
   Project,
   SystemState,
   UpdateAliasInput,
@@ -313,4 +318,49 @@ export interface ApplyResult {
  */
 export async function prepareApply(): Promise<ApplyResult> {
   return send<ApplyResult>("/api/apply", "POST");
+}
+
+// ---------------------------------------------------------------------------
+// Privileged channel (dashboard asks, menu-bar app runs the one admin prompt)
+//
+//   POST /api/privileged/request   { kind }  -> { request, trayAlive }  | 409 when no tray
+//   GET  /api/privileged/progress?id=…       -> PrivilegedProgress
+// ---------------------------------------------------------------------------
+
+export interface AskResult {
+  request: PrivilegedRequest | null;
+  trayAlive: boolean;
+  /** The server's refusal, when the menu-bar app is not there to answer. */
+  error: string | null;
+}
+
+/**
+ * Ask for the privileged run. A refusal is a normal answer, not an exception: it means
+ * the menu-bar app is not running, which the UI has to explain rather than throw about.
+ */
+export async function requestPrivileged(kind: PrivilegedKind = "apply"): Promise<AskResult> {
+  try {
+    const body = await send<{ request?: PrivilegedRequest; trayAlive?: boolean }>(
+      "/api/privileged/request",
+      "POST",
+      { kind },
+    );
+    return { request: body.request ?? null, trayAlive: body.trayAlive ?? false, error: null };
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 409) {
+      return { request: null, trayAlive: false, error: err.message };
+    }
+    throw err;
+  }
+}
+
+export async function fetchPrivilegedProgress(id?: string): Promise<PrivilegedProgress> {
+  const query = id ? `?id=${encodeURIComponent(id)}` : "";
+  const body = await request<Partial<PrivilegedProgress>>(`/api/privileged/progress${query}`);
+  return {
+    state: body.state ?? "idle",
+    trayAlive: body.trayAlive ?? false,
+    request: body.request ?? null,
+    result: body.result ?? null,
+  };
 }

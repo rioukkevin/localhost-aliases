@@ -11,6 +11,7 @@ import { CodeBlock } from "../ui/CodeBlock.tsx";
 import { Panel } from "../ui/Panel.tsx";
 import { LinkButton } from "../LinkButton.tsx";
 import { useToast } from "../ui/Toast.tsx";
+import { ApplyStep } from "./ApplyStep.tsx";
 import { StepShell } from "./StepShell.tsx";
 
 const ORDER: OnboardingStepId[] = ["explain", "apply", "verify", "https", "mcp"];
@@ -81,6 +82,13 @@ export function OnboardingFlow() {
     },
     [load, toast],
   );
+
+  // The tray reported the privileged run finished: re-read the machine rather than
+  // assuming anything, so the step turns green only if it really is applied.
+  const applied = useCallback(async () => {
+    await load();
+    await refreshStatus();
+  }, [load]);
 
   const steps = payload?.steps ?? [];
   const explain = byId(steps, "explain");
@@ -204,41 +212,15 @@ export function OnboardingFlow() {
             </p>
           </StepShell>
 
-          <StepShell
+          <ApplyStep
             index={2}
             step={{ ...apply, title: apply.title || "Apply to this Mac (one admin prompt)" }}
-            actions={
-              <>
-                <Button
-                  variant="primary"
-                  busy={running === "apply"}
-                  disabled={explain.state !== "done" && apply.state !== "done"}
-                  onClick={() => void run("apply")}
-                  data-testid="apply-now"
-                >
-                  {apply.state === "done" ? "Re-check" : "Prepare and apply"}
-                </Button>
-                <span className="text-[11px] text-faint">
-                  macOS asks for your password once. Nothing runs as root afterwards except the
-                  forwarder, and it exits by itself when the app quits.
-                </span>
-              </>
-            }
-          >
-            <p>
-              This is the only privileged moment. The dashboard itself never runs a privileged
-              command — it writes the desired state and the menu-bar app runs this one
-              idempotent script behind the standard macOS admin prompt. Running it twice
-              changes nothing.
-            </p>
-            <CodeBlock className="mt-2" value={command} what="command" label="what will run" />
-            {payload?.sync.needsPrompt ? (
-              <p className="mt-2 text-[12.5px] text-down">
-                Waiting on the prompt: {payload.sync.privileged.join(" ") || "root work is pending."}{" "}
-                Use the menu-bar item, or run the command above yourself.
-              </p>
-            ) : null}
-          </StepShell>
+            command={command}
+            reasons={payload?.sync.privileged ?? []}
+            needsPrompt={payload?.sync.needsPrompt ?? false}
+            disabled={explain.state !== "done" && apply.state !== "done"}
+            onApplied={applied}
+          />
 
           <StepShell
             index={3}
