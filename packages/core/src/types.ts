@@ -1,87 +1,80 @@
 /**
- * Shared contract for every process in the system.
- * This file is the single source of truth: helper, web, mcp and tests all import it.
- * Treat it as frozen unless the change is coordinated across all packages.
+ * v2 shared contract. Every package imports from here; treat it as frozen.
+ *
+ * v2 has no HTTP proxy. Each alias gets its own loopback IP, and a root TCP forwarder
+ * splices <ip>:80 to 127.0.0.1:<port>. Nothing parses HTTP, so WebSockets and any other
+ * protocol pass through untouched — and we cannot terminate TLS for project aliases.
  */
 
 // ---------------------------------------------------------------------------
 // Domain
 // ---------------------------------------------------------------------------
 
-/** A single name -> port mapping. `name` is the host label only, without the TLD. */
 export interface Alias {
   id: string;
-  /** Host label, e.g. "myapp" or "api.myapp". Lowercase, no leading/trailing dot. */
+  /** Host label without the TLD, e.g. "myapp". Lowercase. */
   name: string;
-  /** Local port the traffic is forwarded to. 1-65535. */
+  /** Port the dev server listens on, on 127.0.0.1. */
   port: number;
-  /** Forward target host. Defaults to "127.0.0.1". */
-  target: string;
-  /** Absolute path of the project folder this alias belongs to, if any. */
+  /** Loopback IP owned by this alias for life, e.g. "127.0.0.2". */
+  ip: string;
+  /** Absolute project folder path, or null. Optional by design. */
   projectPath: string | null;
-  /** Free-form human label shown in the dashboard. */
   description: string | null;
-  /** Disabled aliases keep their config but are not routed nor written to /etc/hosts. */
   enabled: boolean;
-  /** ISO-8601 timestamps. */
+  /** True only for the built-in dashboard alias; it cannot be renamed or deleted. */
+  reserved: boolean;
   createdAt: string;
   updatedAt: string;
 }
 
-/** Persisted user configuration. Lives at `configPath()`. */
 export interface Config {
-  version: 1;
-  /** TLD appended to every alias name, without the dot. Default "local". */
+  version: 2;
+  /** TLD appended to every alias name, without the dot. */
   tld: string;
-  /** Port the privileged helper listens on for plain HTTP. Default 80. */
-  httpPort: number;
-  /** Port the privileged helper listens on for TLS. Default 443. */
-  httpsPort: number;
-  /** Port the Next.js dashboard/API binds on 127.0.0.1. Default 7788. */
+  /** Port the embedded dashboard binds on 127.0.0.1. */
   dashboardPort: number;
-  /** When true, the local CA is used to serve HTTPS for every alias. */
+  /** TLS for the dashboard only. Project aliases can never be https in v2. */
   https: boolean;
   aliases: Alias[];
 }
 
 export const DEFAULT_CONFIG: Omit<Config, "aliases"> = {
-  version: 1,
+  version: 2,
   tld: "local",
-  httpPort: 80,
-  httpsPort: 443,
   dashboardPort: 7788,
-  // HTTPS by default since Phase 4: a new install serves TLS from its own local CA.
-  // Only *new* configs get this — store.ts keeps whatever an existing file already says.
-  https: true,
+  https: false,
 };
 
-/** Reserved names that must never be registered (would shadow system resolution). */
+/** The built-in alias that serves the dashboard itself. */
+export const RESERVED_ALIAS_NAME = "index";
+/** Names a user may never register. */
 export const RESERVED_NAMES = ["localhost", "broadcasthost", "local"] as const;
 
-/** Input accepted by the create endpoint. */
+/** Loopback pool. 127.0.0.1 is the real loopback and is never allocated. */
+export const IP_POOL_START = 2;
+export const IP_POOL_END = 254;
+export const IP_PREFIX = "127.0.0.";
+
+export type AliasStatus = "up" | "down" | "unknown";
+
+/** An Alias enriched for display. Never persisted. */
+export interface AliasView extends Alias {
+  /** e.g. "myapp.local" */
+  hostname: string;
+  /** e.g. "http://myapp.local" */
+  url: string;
+  status: AliasStatus;
+}
+
 export interface CreateAliasInput {
   name: string;
   port: number;
-  target?: string;
   projectPath?: string | null;
   description?: string | null;
   enabled?: boolean;
 }
-
-/** Input accepted by the update endpoint. All fields optional. */
 export type UpdateAliasInput = Partial<CreateAliasInput>;
-
-/** Liveness of the upstream port behind an alias. */
-export type AliasStatus = "up" | "down" | "unknown";
-
-/** An Alias enriched for presentation. Returned by the web API, never persisted. */
-export interface AliasView extends Alias {
-  /** Fully-qualified hostname, e.g. "myapp.local". */
-  hostname: string;
-  /** Primary browser URL, e.g. "http://myapp.local" (https when enabled). */
-  url: string;
-  status: AliasStatus;
-}
 
 // ---------------------------------------------------------------------------
 // Validation
@@ -102,91 +95,71 @@ export class ValidationError extends Error {
 }
 
 // ---------------------------------------------------------------------------
-// Privileged helper protocol (HTTP over unix socket)
+// Desired state — what the privileged apply and the forwarder consume
 // ---------------------------------------------------------------------------
 
-/** One routing rule handed to the privileged helper. */
+/** One forwarding rule. The forwarder binds `ip:listenPort` and splices to 127.0.0.1:targetPort. */
 export interface Route {
-  /** Fully-qualified hostname to match on the Host header, e.g. "myapp.local". */
-  host: string;
-  /** Upstream host, e.g. "127.0.0.1". */
-  target: string;
-  /** Upstream port. */
-  port: number;
-  /** Alias id, echoed back in helper logs/status for traceability. */
-  aliasId: string;
+  /** Loopback IP to bind, e.g. "127.0.0.2". */
+  ip: string;
+  /** Always 80 today; kept explicit so 443 can be added without a format change. */
+  listenPort: number;
+  /** Destination port on 127.0.0.1. */
+  targetPort: number;
+  /** For logging and the forwarder's status output only. */
+  hostname: string;
 }
 
-/** Full desired state pushed to the helper. The helper is otherwise stateless. */
-export interface ApplyRequest {
-  httpPort: number;
-  httpsPort: number;
+/** Written by the dashboard, read by the privileged apply script. */
+export interface DesiredState {
+  /** Managed /etc/hosts entries, in file order. */
+  hosts: Array<{ ip: string; hostname: string }>;
+  /** Loopback IPs that must exist on lo0. */
+  loopbackIps: string[];
+  /** Routes handed to the forwarder. */
   routes: Route[];
-  /** When present the helper (re)binds a TLS listener with this material. */
-  tls: { cert: string; key: string } | null;
 }
 
-export interface ApplyResponse {
-  ok: true;
-  /** True when /etc/hosts content actually changed on disk. */
-  hostsChanged: boolean;
-  /** True when the DNS cache was flushed as a result. */
-  dnsFlushed: boolean;
-  routes: number;
+/** What the forwarder writes so the UI can show real state without root. */
+export interface ForwarderStatus {
+  pid: number;
+  startedAt: string;
+  routes: Route[];
+  /** Routes it could not bind, with the reason. */
+  failures: Array<{ route: Route; error: string }>;
 }
 
-export interface HelperStatus {
-  ok: true;
-  version: string;
-  /** Seconds since the helper started. */
-  uptime: number;
-  http: { listening: boolean; port: number };
-  https: { listening: boolean; port: number };
-  routes: number;
-  /** Hostnames currently present in the managed /etc/hosts block. */
+/** Live system state, as observed without privileges. */
+export interface SystemState {
+  /** Loopback IPs currently present on lo0. */
+  loopbackIps: string[];
+  /** Hostnames currently in the managed /etc/hosts block. */
   managedHosts: string[];
-}
-
-export interface HelperError {
-  ok: false;
-  error: string;
-}
-
-/** Reported by the web layer when the helper cannot be reached. */
-export interface HelperUnavailable {
-  installed: boolean;
-  running: boolean;
-  reason: string | null;
+  /** Whether the forwarder is running and current. */
+  forwarder: ForwarderStatus | null;
+  /** True when live state matches desired state and no admin prompt is needed. */
+  applied: boolean;
+  /** Human-readable reasons the state has drifted. Empty when applied. */
+  drift: string[];
 }
 
 // ---------------------------------------------------------------------------
-// System status (web API -> dashboard / MCP)
+// Onboarding
 // ---------------------------------------------------------------------------
 
-export interface SystemStatus {
-  version: string;
-  tld: string;
-  dashboardPort: number;
-  https: boolean;
-  aliasCount: number;
-  helper: HelperUnavailable & { status: HelperStatus | null };
-  ca: { generated: boolean; trusted: boolean; path: string | null };
-  mcp: { claude: McpClientState; codex: McpClientState };
-}
+export type OnboardingStepId = "explain" | "apply" | "verify" | "https" | "mcp";
 
-export interface McpClientState {
-  /** Config file exists and contains our server entry. */
-  installed: boolean;
-  /** Absolute path of the client config file we would write. */
-  configPath: string;
-  /** True when the client's config file exists at all. */
-  clientDetected: boolean;
+export interface OnboardingStep {
+  id: OnboardingStepId;
+  title: string;
+  state: "pending" | "running" | "done" | "failed" | "skipped";
+  detail: string | null;
+  /** True when this step cannot be automated and needs the user to click. */
+  needsUser: boolean;
 }
-
-export type McpClientId = "claude" | "codex";
 
 // ---------------------------------------------------------------------------
-// Project workspace file (.localhost-aliases.json in a project root)
+// Project workspace file (optional, project-local)
 // ---------------------------------------------------------------------------
 
 export interface WorkspaceAliasEntry {
@@ -194,27 +167,21 @@ export interface WorkspaceAliasEntry {
   port: number;
   description?: string;
 }
-
 export interface WorkspaceFile {
   $schema?: string;
   aliases: WorkspaceAliasEntry[];
 }
+export const WORKSPACE_FILENAME = ".localhost-aliases.json";
 
-/** A project = a folder with at least one alias attached, or a workspace file. */
 export interface Project {
-  /** Absolute folder path. */
   path: string;
-  /** Basename of the folder, used as display name. */
   name: string;
-  /** Whether a .localhost-aliases.json exists in that folder. */
   hasWorkspaceFile: boolean;
   aliases: AliasView[];
 }
 
-export const WORKSPACE_FILENAME = ".localhost-aliases.json";
-
 // ---------------------------------------------------------------------------
-// /etc/hosts managed block markers. Never change these: uninstall depends on them.
+// /etc/hosts markers. Never change these: uninstall depends on them.
 // ---------------------------------------------------------------------------
 
 export const HOSTS_BEGIN = "# >>> localhost-aliases >>>";

@@ -1,40 +1,45 @@
-.PHONY: help install uninstall dev build test test-e2e app clean
+.PHONY: help dev test build bundle sign dmg notarize install uninstall clean
 
-BUN ?= bun
+BUN     ?= bun
+DIST    ?= dist
+APP     := $(DIST)/LocalhostAliases.app
 
 help:
-	@echo "Localhost Aliases"
-	@echo ""
-	@echo "  make dev        Run helper + dashboard locally (no install, no login item)"
-	@echo "  make build      Build the Next.js dashboard and the menu-bar app"
-	@echo "  make install    Install the privileged helper + login agent (asks for sudo once)"
-	@echo "  make uninstall  Remove everything, including the /etc/hosts managed block"
+	@echo "Localhost Aliases v2"
 	@echo "  make test       Unit tests"
-	@echo "  make test-e2e   Headless Chromium + MCP protocol tests"
-	@echo "  make app        Build the menu-bar .app bundle only"
-
-install: build
-	@bash scripts/install.sh
-
-uninstall:
-	@bash scripts/uninstall.sh
-
-dev:
-	@bash scripts/dev.sh
-
-build:
-	@$(BUN) install
-	@$(BUN) run --cwd packages/web build
-	@$(MAKE) -C apps/tray app
-
-app:
-	@$(MAKE) -C apps/tray app
+	@echo "  make dev        Run the dashboard in dev (no app, no privileges)"
+	@echo "  make bundle     Build the unsigned .app into $(DIST)"
+	@echo "  make sign       Codesign the bundle with your Developer ID"
+	@echo "  make dmg        Package the signed app into a DMG"
+	@echo "  make notarize   Notarize + staple (needs NOTARY_ARGS)"
+	@echo "  make install    Copy the built app into /Applications"
+	@echo "  make uninstall  Remove the app and every change it made (one admin prompt)"
 
 test:
 	@$(BUN) test packages
 
-test-e2e:
-	@$(BUN) run --cwd e2e test
+dev:
+	@$(BUN) run --cwd packages/dashboard dev
+
+build: bundle
+
+bundle:
+	@bash packages/build/bundle.sh
+
+sign:
+	@bash packages/build/sign.sh
+
+dmg:
+	@bash packages/build/dmg.sh
+
+notarize:
+	@bash packages/build/notarize.sh
+
+install: bundle
+	@bash packages/build/install-local.sh
+
+uninstall:
+	@bash packages/build/uninstall.sh
 
 clean:
-	@rm -rf packages/web/.next apps/tray/.build apps/tray/LocalhostAliases.app e2e/test-results
+	@rm -rf $(DIST) packages/dashboard/.next

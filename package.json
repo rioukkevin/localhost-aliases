@@ -1,19 +1,11 @@
 {
   "name": "localhost-aliases",
   "private": true,
-  "version": "0.1.0",
-  "workspaces": ["packages/*", "e2e"],
+  "version": "2.0.0",
+  "workspaces": ["packages/*"],
   "scripts": {
-    "dev": "bun run --cwd packages/web dev",
-    "build": "bun run --cwd packages/web build",
-    "start": "bun run --cwd packages/web start",
-    "helper": "bun run packages/helper/src/index.ts",
-    "mcp": "bun run packages/mcp/src/index.ts",
-    "test": "bun test packages",
-    "test:e2e": "bun run --cwd e2e test"
+    "dev": "bun run --cwd packages/dashboard dev",
+    "test": "bun test packages"
   },
-  "devDependencies": {
-    "@types/bun": "latest",
-    "typescript": "^5.7.0"
-  }
+  "devDependencies": { "@types/bun": "latest", "typescript": "^5.7.0" }
 }

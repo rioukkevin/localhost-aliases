@@ -8,39 +8,13 @@
         "typescript": "^5.7.0",
       },
     },
-    "e2e": {
-      "name": "@localhost-aliases/e2e",
-      "version": "0.1.0",
-      "dependencies": {
-        "@localhost-aliases/core": "workspace:*",
-      },
-      "devDependencies": {
-        "@playwright/test": "^1.49.0",
-      },
-    },
     "packages/core": {
       "name": "@localhost-aliases/core",
-      "version": "0.1.0",
+      "version": "2.0.0",
     },
-    "packages/helper": {
-      "name": "@localhost-aliases/helper",
-      "version": "0.1.0",
-      "dependencies": {
-        "@localhost-aliases/core": "workspace:*",
-      },
-    },
-    "packages/mcp": {
-      "name": "@localhost-aliases/mcp",
-      "version": "0.1.0",
-      "dependencies": {
-        "@localhost-aliases/core": "workspace:*",
-        "@modelcontextprotocol/sdk": "^1.12.0",
-        "zod": "^3.24.0",
-      },
-    },
-    "packages/web": {
-      "name": "@localhost-aliases/web",
-      "version": "0.1.0",
+    "packages/dashboard": {
+      "name": "@localhost-aliases/dashboard",
+      "version": "2.0.0",
       "dependencies": {
         "@localhost-aliases/core": "workspace:*",
         "next": "^15.1.0",
@@ -52,6 +26,22 @@
         "@types/react": "^19.0.0",
         "@types/react-dom": "^19.0.0",
         "tailwindcss": "^4.0.0",
+      },
+    },
+    "packages/forwarder": {
+      "name": "@localhost-aliases/forwarder",
+      "version": "2.0.0",
+      "dependencies": {
+        "@localhost-aliases/core": "workspace:*",
+      },
+    },
+    "packages/mcp": {
+      "name": "@localhost-aliases/mcp",
+      "version": "2.0.0",
+      "dependencies": {
+        "@localhost-aliases/core": "workspace:*",
+        "@modelcontextprotocol/sdk": "^1.12.0",
+        "zod": "^3.24.0",
       },
     },
   },
@@ -124,13 +114,11 @@
 
     "@localhost-aliases/core": ["@localhost-aliases/core@workspace:packages/core"],
 
-    "@localhost-aliases/e2e": ["@localhost-aliases/e2e@workspace:e2e"],
+    "@localhost-aliases/dashboard": ["@localhost-aliases/dashboard@workspace:packages/dashboard"],
 
-    "@localhost-aliases/helper": ["@localhost-aliases/helper@workspace:packages/helper"],
+    "@localhost-aliases/forwarder": ["@localhost-aliases/forwarder@workspace:packages/forwarder"],
 
     "@localhost-aliases/mcp": ["@localhost-aliases/mcp@workspace:packages/mcp"],
-
-    "@localhost-aliases/web": ["@localhost-aliases/web@workspace:packages/web"],
 
     "@modelcontextprotocol/sdk": ["@modelcontextprotocol/sdk@1.30.0", "", { "dependencies": { "@hono/node-server": "^1.19.9 || ^2.0.5", "ajv": "^8.17.1", "ajv-formats": "^3.0.1", "content-type": "^1.0.5", "cors": "^2.8.5", "cross-spawn": "^7.0.5", "eventsource": "^3.0.2", "eventsource-parser": "^3.0.0", "express": "^5.2.1", "express-rate-limit": "^8.2.1", "hono": "^4.11.4", "jose": "^6.1.3", "json-schema-typed": "^8.0.2", "pkce-challenge": "^5.0.0", "raw-body": "^3.0.0", "zod": "^3.25 || ^4.0", "zod-to-json-schema": "^3.25.1" }, "peerDependencies": { "@cfworker/json-schema": "^4.1.1" }, "optionalPeers": ["@cfworker/json-schema"] }, "sha512-xKd8OIzlqNzcqcNumGAa6g+PW2kjD5vrpcKOnfldAUPP3j7lnqMPwlTXQm8gF+UwH72z0lqaRbjr9hqGz0eITA=="],
 

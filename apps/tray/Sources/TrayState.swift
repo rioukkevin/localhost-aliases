@@ -1,58 +1,56 @@
-import AppKit
+import Foundation
 
-/// What the menu bar is currently telling the user. Derived by `AppDelegate` from the
-/// supervised process plus the health poll; consumed by `StatusIcon` and `StatusMenu`.
-enum TrayState {
-    /// No server, and none wanted.
-    case stopped
-    /// A child is up but `/api/health` has not answered yet.
-    case starting
-    /// The API answered.
-    case running(aliasCount: Int)
-    /// Cannot spawn, or the server keeps dying.
-    case error(String)
+/// Everything the menu renders from. Owned by AppDelegate, mutated only on the main thread.
+struct TrayState {
+    var config = AppConfig.fallback
+    var dashboard: DashboardProcess.State = .stopped
+    var system = SystemSnapshot()
+    /// alias id -> is something listening on its target port
+    var aliasUp: [String: Bool] = [:]
+    /// True while the admin prompt is on screen; the privileged menu items disable themselves.
+    var privilegedBusy = false
+    var lastMessage: String?
 
-    /// First line of the menu.
+    var dashboardIsRunning: Bool {
+        if case .running = dashboard { return true }
+        return false
+    }
+
+    /// Requirement 6: prefer the alias, fall back to the loopback port only when the alias
+    /// cannot possibly resolve yet.
+    var dashboardURL: String {
+        system.canUseAliasURLs
+            ? "http://\(config.dashboardHostname)"
+            : config.loopbackDashboardURL
+    }
+
     var statusLine: String {
-        switch self {
+        switch dashboard {
+        case .failed(let reason):
+            return "Dashboard failed — \(reason)"
         case .stopped:
             return "Stopped"
         case .starting:
-            return "Starting…"
-        case .running(let count):
-            return "Running · \(count) alias\(count == 1 ? "" : "es")"
-        case .error(let reason):
-            return "Error · \(reason)"
+            return "Dashboard starting…"
+        case .backingOff(let seconds):
+            return "Dashboard crashed — retrying in \(seconds)s"
+        case .running:
+            if !system.dashboardReachable { return "Dashboard starting…" }
+            if system.needsPrompt || !system.applied { return "Drift pending — needs admin" }
+            if !system.forwarderRunning { return "Applied — forwarder not running" }
+            return "Running — aliases applied"
         }
     }
 
-    var accessibilityDescription: String {
-        switch self {
-        case .stopped: return "Localhost Aliases: server stopped"
-        case .starting: return "Localhost Aliases: server starting"
-        case .running(let count): return "Localhost Aliases: running, \(count) aliases"
-        case .error(let reason): return "Localhost Aliases: error, \(reason)"
-        }
-    }
-
-    /// Each state gets its own glyph — shape, not colour, is what survives every menu bar
-    /// appearance (light, dark, highlighted, reduced transparency).
-    var symbolName: String {
-        switch self {
-        case .stopped: return "pause.circle"
-        case .starting: return "arrow.triangle.2.circlepath"
-        case .running: return "point.3.connected.trianglepath.dotted"
-        case .error: return "exclamationmark.triangle.fill"
-        }
-    }
-
-    /// `nil` means "render as a template image", which is the correct default in a menu bar.
-    /// Only the error state opts out, because an alert is worth breaking the rule for; the
-    /// colour used is a dynamic system colour so it stays legible in both appearances.
-    var tint: NSColor? {
-        switch self {
-        case .error: return .systemRed
-        case .stopped, .starting, .running: return nil
+    var iconKind: StatusIcon.Kind {
+        switch dashboard {
+        case .running:
+            if system.needsPrompt || !system.applied { return .attention }
+            return system.dashboardReachable ? .live : .idle
+        case .failed, .backingOff:
+            return .attention
+        case .stopped, .starting:
+            return .idle
         }
     }
 }

@@ -1,249 +1,190 @@
 import AppKit
+import Darwin
 
-/// Wires the pieces together: the supervised server, the API poll, the two `SMAppService`
-/// registrations, and the menu. Holds the only mutable app state, all of it on the main thread.
-final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuDelegate {
-    private var statusMenu: StatusMenu?
-    private let server = ServerProcess()
-    private let poller = HealthPoller()
+/// Wiring only. Every behaviour lives in its own file; this class owns the objects,
+/// the state and the menu actions.
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MenuActions {
+    private let layout = RuntimeLayout.resolve()
+    private let log = Logger(path: Paths.trayLogPath)
+
+    private var statusItem: NSStatusItem!
+    private var dashboard: DashboardProcess!
+    private var heartbeat: Heartbeat!
+    private var poller: StatusPoller!
     private var signalSources: [DispatchSourceSignal] = []
 
-    /// `nil` when this build cannot install the daemon (checkout build, or a bundle without
-    /// `Contents/Library/LaunchDaemons/…`). Nothing else in the app can reach `SMAppService`.
-    private let helperService = ManagedService.helper()
-    private let loginItem = ManagedService.launchAtLogin()
-
-    private var aliases: [Alias] = []
-    private var status: SystemStatusSummary?
-    private var helperState: ServiceState?
-    private var loginState: ServiceState?
-    private var isHealthy = false
-    /// The dashboard port answered but we did not spawn it: a LaunchAgent or `dev.sh` owns it.
-    private var adoptedExternalServer = false
-    /// User intent. Survives crash loops, cleared only by "Stop Server".
-    private var userWantsServer = true
+    private var state = TrayState()
+    private var isTerminating = false
+    private var hasOfferedLaunchApply = false
 
     // MARK: - Lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        statusMenu = StatusMenu(delegate: self)
-        installSignalHandlers()
+        log.log("tray: launch mode=\(layout.mode.rawValue) root=\(layout.root)")
+        state.config = AppConfig.load()
 
-        server.onStateChange = { [weak self] in self?.refresh() }
-        poller.onResult = { [weak self] result in self?.handle(result) }
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem.button?.image = StatusIcon.image(state.iconKind)
+        statusItem.button?.toolTip = Paths.appName
+        let menu = NSMenu()
+        menu.delegate = self
+        statusItem.menu = menu
 
-        readServiceStates()
-        // The first poll decides whether to spawn: never fight an already-running server for
-        // the port. `handle(_:)` starts one as soon as the port is found dead.
+        heartbeat = Heartbeat(log: log)
+        heartbeat.start()
+
+        dashboard = DashboardProcess(layout: layout, log: log) { [weak self] newState in
+            guard let self else { return }
+            self.state.dashboard = newState
+            self.refreshIcon()
+        }
+        dashboard.start(port: state.config.dashboardPort)
+
+        poller = StatusPoller(log: log) { [weak self] config, snapshot, statuses in
+            guard let self else { return }
+            self.state.config = config
+            self.state.system = snapshot
+            self.state.aliasUp = statuses
+            self.refreshIcon()
+            self.offerLaunchApplyIfDrifted()
+        }
         poller.start()
-        refresh()
+
+        installSignalHandlers()
     }
 
-    func applicationWillTerminate(_ notification: Notification) {
-        poller.stop()
-        server.terminateSynchronously()
-    }
-
-    /// SIGTERM/SIGINT (launchd, `kill`, Ctrl-C when run from a terminal) must still take the
-    /// web server down with us, so route them through the normal quit path.
+    /// SIGTERM/SIGINT must shut down as cleanly as Quit does — otherwise the liveness file
+    /// stays fresh and the root forwarder keeps running with no app to stop it.
     private func installSignalHandlers() {
-        for number in [SIGTERM, SIGINT, SIGHUP] {
-            signal(number, SIG_IGN)
-            let source = DispatchSource.makeSignalSource(signal: number, queue: .main)
-            source.setEventHandler { NSApp.terminate(nil) }
+        for sig in [SIGTERM, SIGINT] {
+            signal(sig, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+            source.setEventHandler { [weak self] in
+                self?.log.log("tray: received signal \(sig)")
+                NSApp.terminate(nil)
+            }
             source.resume()
             signalSources.append(source)
         }
-        signal(SIGPIPE, SIG_IGN)
     }
 
-    // MARK: - State
-
-    private func handle(_ result: HealthResult) {
-        switch result {
-        case .healthy(let summary, let list):
-            isHealthy = true
-            status = summary
-            aliases = list.sorted { $0.hostname.localizedStandardCompare($1.hostname) == .orderedAscending }
-            if !server.isActive { adoptedExternalServer = true }
-        case .unhealthy:
-            isHealthy = false
-            status = nil
-            aliases = []
-            adoptedExternalServer = false
-            if userWantsServer && !server.isActive { server.start() }
-        }
-        refresh()
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !isTerminating else { return .terminateNow }
+        isTerminating = true
+        log.log("tray: shutting down")
+        poller.stop()
+        heartbeat.stop()  // removes the liveness file -> the root forwarder exits on its own
+        dashboard.stop { NSApp.reply(toApplicationShouldTerminate: true) }
+        return .terminateLater
     }
 
-    /// Reads `SMAppService.status` for both services. Side-effect free: a status read never
-    /// installs anything.
-    private func readServiceStates() {
-        helperState = helperService?.state
-        loginState = loginItem?.state
+    // MARK: - Menu
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        MenuBuilder.populate(menu, state: state, target: self)
+        poller.refreshSoon()
     }
 
-    private var trayState: TrayState {
-        if case .failed(let reason) = server.state { return .error(reason) }
-        if isHealthy { return .running(aliasCount: status?.aliasCount ?? aliases.count) }
-        if !userWantsServer { return .stopped }
-        if server.consecutiveFailures >= 3 { return .error("server keeps exiting") }
-        return .starting
+    private func refreshIcon() {
+        statusItem?.button?.image = StatusIcon.image(state.iconKind)
+        statusItem?.button?.toolTip = "\(Paths.appName) — \(state.statusLine)"
     }
 
-    private func refresh() {
-        var model = MenuModel()
-        model.state = trayState
-        model.aliases = aliases
-        model.status = status
-        model.serverRunning = server.isActive || adoptedExternalServer
-        model.controlsServer = !adoptedExternalServer
-        model.helperService = helperState
-        model.launchAtLogin = loginState
-        statusMenu?.update(model)
+    // MARK: - Actions
+
+    func openDashboard(_ sender: Any?) {
+        open(urlString: state.dashboardURL)
     }
 
-    // MARK: - StatusMenuDelegate
-
-    func statusMenuWillOpen() {
-        readServiceStates()
-        refresh()
-        poller.poll()
+    func openAlias(_ sender: Any?) {
+        guard let item = sender as? NSMenuItem, let urlString = item.representedObject as? String
+        else { return }
+        open(urlString: urlString)
     }
 
-    func statusMenuOpenDashboard() {
-        NSWorkspace.shared.open(Paths.dashboardURL)
+    func restartDashboard(_ sender: Any?) {
+        dashboard.restart(port: state.config.dashboardPort)
     }
 
-    /// Opens the URL the API built, which already carries the scheme the helper is actually
-    /// serving (`https://` once `config.https` is on, which is the default from Phase 4).
-    /// Guessing a scheme here would open a port nothing is listening on.
-    func statusMenuOpen(alias: Alias) {
-        guard let url = URL(string: alias.url) else { return }
-        NSWorkspace.shared.open(url)
+    /// Privileged action #1 of 2. See PrivilegedApply.swift.
+    func reapplyAliases(_ sender: Any?) {
+        let confirmed = confirm(
+            title: "Re-apply aliases?",
+            body: "macOS will ask for your administrator password once. "
+                + "This updates the managed block in /etc/hosts, the loopback addresses on lo0, "
+                + "flushes DNS and restarts the forwarder. Nothing is installed permanently.",
+            action: "Re-apply")
+        guard confirmed else { return }
+        runPrivileged(.apply)
     }
 
-    /// The one privileged action in the app. Installs the root LaunchDaemon; macOS raises an
-    /// administrator prompt and then lists it in System Settings › Login Items.
-    func statusMenuInstallHelper() {
-        guard let helperService else {
-            present(title: "Cannot install the helper", message: """
-                This copy of Localhost Aliases does not contain the helper daemon.
-
-                Install the packaged app in /Applications, or in a development checkout run \
-                the install script instead.
-                """)
-            return
-        }
-        do {
-            try helperService.register()
-        } catch {
-            present(title: "Could not install the helper", message: error.localizedDescription)
-            readServiceStates()
-            refresh()
-            return
-        }
-        // Never report success optimistically: read the status macOS ended up in and say
-        // what it means — a fresh registration is normally `.requiresApproval`.
-        readServiceStates()
-        refresh()
-        poller.poll()
-        let state = helperState ?? .notRegistered
-        present(
-            title: state.summary(subject: .helper),
-            message: state.explanation(subject: .helper),
-            openSettings: state.needsUserApproval
-        )
+    /// Privileged action #2 of 2. See PrivilegedApply.swift.
+    func uninstallEverything(_ sender: Any?) {
+        let confirmed = confirm(
+            title: "Remove every change this app made?",
+            body: "The forwarder stops, the lo0 addresses and the /etc/hosts block are removed, "
+                + "DNS is flushed and your aliases are deleted. "
+                + "macOS will ask for your administrator password once.",
+            action: "Uninstall",
+            destructive: true)
+        guard confirmed else { return }
+        runPrivileged(.uninstall)
     }
 
-    func statusMenuToggleLaunchAtLogin() {
-        guard let loginItem else { return }
-        do {
-            if loginItem.state.isActive {
-                try loginItem.unregister()
-            } else {
-                try loginItem.register()
-            }
-        } catch {
-            present(title: "Could not change Launch at Login", message: error.localizedDescription)
-        }
-        readServiceStates()
-        refresh()
-        if loginState?.needsUserApproval == true {
-            let state = ServiceState.requiresApproval
-            present(
-                title: state.summary(subject: .launchAtLogin),
-                message: state.explanation(subject: .launchAtLogin),
-                openSettings: true
-            )
-        }
-    }
-
-    func statusMenuOpenLoginItemsSettings() {
-        ManagedService.openLoginItemsSettings()
-    }
-
-    func statusMenuCopyInstallCommand() {
-        guard let command = status?.installCommand else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(command, forType: .string)
-    }
-
-    func statusMenuRestartServer() {
-        userWantsServer = true
-        adoptedExternalServer = false
-        isHealthy = false
-        status = nil
-        aliases = []
-        server.restart()
-        refresh()
-    }
-
-    func statusMenuToggleServer() {
-        if server.isActive {
-            userWantsServer = false
-            isHealthy = false
-            status = nil
-            aliases = []
-            server.stop()
-        } else {
-            userWantsServer = true
-            server.start()
-        }
-        refresh()
-    }
-
-    func statusMenuOpenLog() {
-        let log = Paths.webLog
-        if FileManager.default.fileExists(atPath: log.path) {
-            NSWorkspace.shared.open(log)
-        } else {
-            try? FileManager.default.createDirectory(at: Paths.logDirectory, withIntermediateDirectories: true)
-            NSWorkspace.shared.open(Paths.logDirectory)
-        }
-    }
-
-    func statusMenuQuit() {
+    func quitApp(_ sender: Any?) {
         NSApp.terminate(nil)
     }
 
-    // MARK: - Alerts
+    /// docs/V2.md wants one prompt at launch when the live state has drifted (a reboot clears
+    /// the lo0 aliases). That would put a dialog on screen with nobody asking for it, so it is
+    /// opt-in: without LA_PROMPT_ON_LAUNCH_DRIFT the tray only turns the icon to "attention"
+    /// and waits for the user to pick Re-apply Aliases. Onboarding drives the first apply.
+    private func offerLaunchApplyIfDrifted() {
+        guard Paths.env("LA_PROMPT_ON_LAUNCH_DRIFT") != nil else { return }
+        guard !hasOfferedLaunchApply, !state.privilegedBusy else { return }
+        guard state.system.dashboardReachable, state.system.needsPrompt else { return }
+        hasOfferedLaunchApply = true
+        reapplyAliases(nil)
+    }
 
-    /// An accessory app has no windows and is not frontmost, so an alert has to activate it
-    /// or it opens behind whatever the user is looking at.
-    private func present(title: String, message: String, openSettings: Bool = false) {
+    // MARK: - Helpers
+
+    private func runPrivileged(_ kind: PrivilegedApply.Kind) {
+        state.privilegedBusy = true
+        state.lastMessage = kind == .apply ? "Applying…" : "Uninstalling…"
+        PrivilegedApply.run(layout: layout, kind: kind, log: log) { [weak self] result in
+            guard let self else { return }
+            self.state.privilegedBusy = false
+            if result.ok {
+                self.state.lastMessage = nil
+                self.poller.refreshSoon()
+                if kind == .uninstall { NSApp.terminate(nil) }
+            } else if result.cancelled {
+                self.state.lastMessage = "Cancelled — nothing changed"
+            } else {
+                self.state.lastMessage = "Failed — see \(Paths.trayLogPath)"
+            }
+            self.refreshIcon()
+        }
+    }
+
+    private func open(urlString: String) {
+        guard let url = URL(string: urlString) else { return }
+        log.log("tray: opening \(urlString)")
+        NSWorkspace.shared.open(url)
+    }
+
+    private func confirm(title: String, body: String, action: String, destructive: Bool = false)
+        -> Bool
+    {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = title
-        alert.informativeText = message
-        alert.alertStyle = .informational
-        if openSettings {
-            alert.addButton(withTitle: "Open System Settings")
-            alert.addButton(withTitle: "Later")
-            if alert.runModal() == .alertFirstButtonReturn { ManagedService.openLoginItemsSettings() }
-            return
-        }
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
+        alert.informativeText = body
+        alert.alertStyle = destructive ? .warning : .informational
+        let confirmButton = alert.addButton(withTitle: action)
+        alert.addButton(withTitle: "Cancel")
+        if destructive { confirmButton.hasDestructiveAction = true }
+        return alert.runModal() == .alertFirstButtonReturn
     }
 }

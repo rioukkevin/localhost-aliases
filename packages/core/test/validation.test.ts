@@ -1,245 +1,151 @@
 import { describe, expect, test } from "bun:test";
-import { ValidationError, type Alias } from "../src/types.ts";
 import {
   assertValidAlias,
+  assertValidPort,
+  assertValidTld,
   hostnameFor,
+  isValidLabel,
+  isValidName,
+  isValidPort,
   normalizeName,
-  normalizeTld,
   urlFor,
-  validateName,
-  validatePort,
-  validateTarget,
-  validateTld,
 } from "../src/validation.ts";
+import { ValidationError, type Alias } from "../src/types.ts";
 
 function alias(partial: Partial<Alias>): Alias {
   return {
     id: "id-1",
-    name: "myapp",
+    name: "existing",
     port: 3000,
-    target: "127.0.0.1",
+    ip: "127.0.0.2",
     projectPath: null,
     description: null,
     enabled: true,
-    createdAt: "2024-01-01T00:00:00.000Z",
-    updatedAt: "2024-01-01T00:00:00.000Z",
+    reserved: false,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
     ...partial,
   };
 }
 
-describe("normalizeName", () => {
-  test("trims, lowercases and strips trailing dots", () => {
-    expect(normalizeName("  MyApp.  ")).toBe("myapp");
-    expect(normalizeName("API.MyApp...")).toBe("api.myapp");
+function issuesFor(input: Parameters<typeof assertValidAlias>[0], existing: Alias[] = [], opts = {}) {
+  try {
+    assertValidAlias(input, existing, opts);
+  } catch (e) {
+    if (e instanceof ValidationError) return e.issues;
+    throw e;
+  }
+  return [];
+}
+
+describe("label + name rules", () => {
+  const valid = ["a", "myapp", "my-app", "a1", "0", "api.myapp", "a".repeat(63)];
+  const invalid = ["", "-a", "a-", "My-App", "my_app", "a".repeat(64), "a..b", ".a", "a.", "a b", "café"];
+
+  for (const name of valid) {
+    test(`accepts ${JSON.stringify(name)}`, () => expect(isValidName(name)).toBe(true));
+  }
+  for (const name of invalid) {
+    test(`rejects ${JSON.stringify(name)}`, () => expect(isValidName(name)).toBe(false));
+  }
+
+  test("isValidLabel rejects dotted input", () => {
+    expect(isValidLabel("a.b")).toBe(false);
   });
 
-  test("folds compatibility unicode forms (NFKC)", () => {
-    expect(normalizeName("ＭＹＡＰＰ")).toBe("myapp");
-  });
-
-  test("leaves non-ascii letters in place so validation can reject them", () => {
-    expect(normalizeName("CAFÉ")).toBe("café");
-  });
-
-  test("is total on non-strings", () => {
-    expect(normalizeName(undefined as unknown as string)).toBe("");
-  });
-});
-
-describe("normalizeTld", () => {
-  test("strips leading and trailing dots", () => {
-    expect(normalizeTld(".Local.")).toBe("local");
-  });
-});
-
-describe("validateName", () => {
-  test.each(["myapp", "my-app", "api.myapp", "a", "a1-b2.c3", "x".repeat(63)])(
-    "accepts %p",
-    (name) => {
-      expect(validateName(name)).toEqual([]);
-    },
-  );
-
-  test("accepts uppercase input by normalizing it", () => {
-    expect(validateName("MyApp")).toEqual([]);
-  });
-
-  test.each([
-    ["", "empty"],
-    ["   ", "blank"],
-    ["-myapp", "leading hyphen"],
-    ["myapp-", "trailing hyphen"],
-    ["my_app", "underscore"],
-    ["my app", "space"],
-    ["my#app", "hash"],
-    ["café", "non-ascii"],
-    ["мойапп", "cyrillic"],
-    ["api..myapp", "empty label"],
-    [".myapp", "leading dot"],
-    ["x".repeat(64), "label too long"],
-  ])("rejects %p (%s)", (name) => {
-    expect(validateName(name).length).toBeGreaterThan(0);
-    expect(validateName(name)[0]!.field).toBe("name");
-  });
-
-  test("rejects names longer than 253 characters", () => {
-    const long = new Array(6).fill("x".repeat(50)).join(".");
-    expect(long.length).toBeGreaterThan(253);
-    expect(validateName(long).length).toBe(1);
-  });
-
-  test.each(["localhost", "broadcasthost", "local", "LOCALHOST", " localhost. "])(
-    "rejects reserved name %p",
-    (name) => {
-      const issues = validateName(name);
-      expect(issues.length).toBe(1);
-      expect(issues[0]!.message).toContain("reserved");
-    },
-  );
-
-  test("does not reject a reserved word used as a label of a longer name", () => {
-    expect(validateName("api.localhost")).toEqual([]);
+  test("normalizeName trims and lowercases", () => {
+    expect(normalizeName("  MyApp \n")).toBe("myapp");
   });
 });
 
-describe("validatePort", () => {
-  test.each([1, 80, 3000, 65535])("accepts %p", (port) => {
-    expect(validatePort(port)).toEqual([]);
+describe("ports", () => {
+  test.each([1, 80, 3000, 65535])("accepts %p", (p) => expect(isValidPort(p)).toBe(true));
+  test.each([0, -1, 65536, 3000.5, NaN, "3000", null, undefined])("rejects %p", (p) =>
+    expect(isValidPort(p)).toBe(false),
+  );
+  test("assertValidPort throws with the field name", () => {
+    try {
+      assertValidPort(0, "dashboardPort");
+      throw new Error("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ValidationError);
+      expect((e as ValidationError).issues[0]!.field).toBe("dashboardPort");
+    }
   });
-
-  test.each([0, -1, 65536, 99999, 3000.5, Number.NaN, Number.POSITIVE_INFINITY])(
-    "rejects %p",
-    (port) => {
-      expect(validatePort(port).length).toBe(1);
-    },
-  );
-
-  test.each([["3000"], [null], [undefined], [{}], [[3000]], [true]])(
-    "rejects non-number %p",
-    (port) => {
-      const issues = validatePort(port);
-      expect(issues.length).toBe(1);
-      expect(issues[0]!.field).toBe("port");
-    },
-  );
-});
-
-describe("validateTarget", () => {
-  test.each(["127.0.0.1", "::1", "localhost", "  LOCALHOST  "])("accepts %p", (target) => {
-    expect(validateTarget(target)).toEqual([]);
-  });
-
-  test.each(["", "0.0.0.0", "192.168.1.10", "example.com", "127.0.0.2", "10.0.0.1"])(
-    "rejects %p",
-    (target) => {
-      const issues = validateTarget(target);
-      expect(issues.length).toBe(1);
-      expect(issues[0]!.field).toBe("target");
-    },
-  );
-});
-
-describe("validateTld", () => {
-  test.each(["local", "test", "dev", "internal.local", ".local"])("accepts %p", (tld) => {
-    expect(validateTld(tld)).toEqual([]);
-  });
-
-  test.each(["", "   ", "loc al", "-local", "local-", "lo..cal", "123", "x".repeat(64)])(
-    "rejects %p",
-    (tld) => {
-      const issues = validateTld(tld);
-      expect(issues.length).toBe(1);
-      expect(issues[0]!.field).toBe("tld");
-    },
-  );
 });
 
 describe("assertValidAlias", () => {
-  test("passes for a minimal valid input", () => {
-    expect(() => assertValidAlias({ name: "myapp", port: 3000 }, [])).not.toThrow();
+  test("accepts a plain alias", () => {
+    expect(() => assertValidAlias({ name: "myapp", port: 3000 })).not.toThrow();
   });
 
-  test("collects every issue in one ValidationError", () => {
-    try {
-      assertValidAlias({ name: "-bad-", port: 0, target: "example.com" }, []);
-      throw new Error("expected a ValidationError");
-    } catch (error) {
-      expect(error).toBeInstanceOf(ValidationError);
-      const fields = (error as ValidationError).issues.map((i) => i.field).sort();
-      expect(fields).toEqual(["name", "port", "target"]);
-    }
+  test("requires name and port on create", () => {
+    const issues = issuesFor({} as never);
+    expect(issues.map((i) => i.field).sort()).toEqual(["name", "port"]);
   });
 
-  test("rejects a name already used, case-insensitively", () => {
-    const existing = [alias({ id: "a", name: "myapp" })];
-    expect(() => assertValidAlias({ name: "MyApp", port: 4000 }, existing)).toThrow(
-      ValidationError,
-    );
-    expect(() => assertValidAlias({ name: "  myapp. ", port: 4000 }, existing)).toThrow(
-      ValidationError,
-    );
+  test("reports every problem at once", () => {
+    const issues = issuesFor({ name: "-bad", port: 0 });
+    expect(issues).toHaveLength(2);
   });
 
-  test("allows a different name against the same existing set", () => {
-    const existing = [alias({ id: "a", name: "myapp" })];
-    expect(() => assertValidAlias({ name: "other", port: 4000 }, existing)).not.toThrow();
+  test.each(["localhost", "broadcasthost", "local"])("rejects reserved name %s", (name) => {
+    expect(issuesFor({ name, port: 3000 })[0]!.message).toContain("reserved by macOS");
   });
 
-  test("excludeId lets an alias keep its own name on update", () => {
-    const existing = [alias({ id: "a", name: "myapp" })];
-    expect(() =>
-      assertValidAlias({ name: "myapp", port: 4000 }, existing, { excludeId: "a" }),
-    ).not.toThrow();
-    expect(() =>
-      assertValidAlias({ name: "myapp", port: 4000 }, existing, { excludeId: "b" }),
-    ).toThrow(ValidationError);
+  test("protects the index name from user creation", () => {
+    expect(issuesFor({ name: "index", port: 3000 })[0]!.message).toContain("reserved for the dashboard");
   });
 
-  test("skips target validation when it is not provided", () => {
-    expect(() => assertValidAlias({ name: "myapp", port: 3000 }, [])).not.toThrow();
-    expect(() =>
-      assertValidAlias({ name: "myapp", port: 3000, target: "::1" }, []),
-    ).not.toThrow();
+  test("allows index when explicitly permitted (seeding)", () => {
+    expect(issuesFor({ name: "index", port: 7788 }, [], { allowReserved: true })).toEqual([]);
   });
 
-  test("reports the uniqueness clash on the name field", () => {
-    const existing = [alias({ id: "a", name: "myapp" })];
-    try {
-      assertValidAlias({ name: "myapp", port: 4000 }, existing);
-      throw new Error("expected a ValidationError");
-    } catch (error) {
-      const issues = (error as ValidationError).issues;
-      expect(issues.some((i) => i.field === "name" && i.message.includes("already used"))).toBe(
-        true,
-      );
-    }
+  test("uniqueness is case-insensitive", () => {
+    const existing = [alias({ name: "myapp" })];
+    expect(issuesFor({ name: "myapp", port: 3000 }, existing)[0]!.message).toContain("already exists");
+  });
+
+  test("uniqueness skips the alias being updated", () => {
+    const existing = [alias({ id: "id-1", name: "myapp" })];
+    expect(issuesFor({ name: "myapp", port: 3001 }, existing, { excludeId: "id-1" })).toEqual([]);
+  });
+
+  test("partial mode skips absent fields", () => {
+    expect(issuesFor({ port: 4000 }, [], { partial: true })).toEqual([]);
+    expect(issuesFor({ port: 0 }, [], { partial: true })).toHaveLength(1);
+  });
+
+  test("rejects a relative project path", () => {
+    expect(issuesFor({ name: "a", port: 1, projectPath: "relative" })[0]!.field).toBe("projectPath");
+  });
+
+  test("accepts null project path and description", () => {
+    expect(issuesFor({ name: "a", port: 1, projectPath: null, description: null })).toEqual([]);
+  });
+
+  test("rejects a name that overflows the hostname limit with its TLD", () => {
+    const name = [1, 2, 3, 4].map(() => "a".repeat(63)).join(".");
+    expect(issuesFor({ name, port: 1 }, [], { tld: "local" })[0]!.message).toContain("253");
+  });
+
+  test("ValidationError message lists field and message", () => {
+    const err = new ValidationError([{ field: "name", message: "nope" }]);
+    expect(err.message).toBe("name: nope");
   });
 });
 
-describe("hostnameFor", () => {
-  test("joins the normalized name and tld", () => {
-    expect(hostnameFor("MyApp", "local")).toBe("myapp.local");
-    expect(hostnameFor("api.myapp", ".TEST.")).toBe("api.myapp.test");
+describe("tld", () => {
+  test.each(["local", "test", "dev"])("accepts %s", (tld) => expect(() => assertValidTld(tld)).not.toThrow());
+  test("accepts and normalizes surrounding case and whitespace", () => {
+    expect(() => assertValidTld(" LOCAL ")).not.toThrow();
   });
-
-  test("returns the bare name when the tld is empty", () => {
-    expect(hostnameFor("myapp", "")).toBe("myapp");
-  });
+  test.each(["", " ", ".local", "lo cal", "local_host", "localhost", 42, null])("rejects %p", (tld) =>
+    expect(() => assertValidTld(tld)).toThrow(ValidationError),
+  );
 });
 
-describe("urlFor", () => {
-  test("omits the default port for the scheme", () => {
-    expect(urlFor("myapp", "local", false, 80)).toBe("http://myapp.local");
-    expect(urlFor("myapp", "local", true, 443)).toBe("https://myapp.local");
-  });
-
-  test("keeps a non-default port", () => {
-    expect(urlFor("myapp", "local", false, 8080)).toBe("http://myapp.local:8080");
-    expect(urlFor("myapp", "local", true, 8443)).toBe("https://myapp.local:8443");
-  });
-
-  test("443 on http and 80 on https are not defaults", () => {
-    expect(urlFor("myapp", "local", false, 443)).toBe("http://myapp.local:443");
-    expect(urlFor("myapp", "local", true, 80)).toBe("https://myapp.local:80");
-  });
+describe("hostnameFor / urlFor", () => {
+  test("joins with a dot", () => expect(hostnameFor("myapp", "local")).toBe("myapp.local"));
+  test("project aliases are http only", () => expect(urlFor("myapp", "local")).toBe("http://myapp.local"));
 });

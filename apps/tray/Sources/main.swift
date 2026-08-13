@@ -1,10 +1,10 @@
 import AppKit
 
-// Entry point. `LSUIElement` in Info.plist already makes this a menu-bar-only app; setting
-// the activation policy here means the bare binary in `.build/` behaves the same way (no
-// dock icon, no window) when it is run outside the bundle.
+// LSUIElement in Info.plist keeps us out of the Dock; .accessory keeps us out of it even when
+// the binary is run directly. The app never opens a window — the dashboard is a browser tab.
 let application = NSApplication.shared
+application.setActivationPolicy(.accessory)
+
 let delegate = AppDelegate()
 application.delegate = delegate
-application.setActivationPolicy(.accessory)
 application.run()

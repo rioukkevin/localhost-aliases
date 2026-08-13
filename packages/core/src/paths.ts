@@ -1,34 +1,47 @@
 /**
- * Every filesystem location the system touches, in one place.
- * Paths are resolved lazily so tests can override HOME / LA_CONFIG_DIR.
+ * Every filesystem location v2 touches. Resolved lazily so tests can redirect via LA_*.
+ * There is no /Library, no /var/run and no LaunchDaemon in v2 — nothing is installed
+ * system-wide except the /etc/hosts managed block and the lo0 aliases, both reversible.
  */
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-/** launchd labels. Changing these breaks upgrade/uninstall of existing installs. */
-export const HELPER_LABEL = "dev.localhost-aliases.helper";
-export const AGENT_LABEL = "dev.localhost-aliases.web";
-
-/** Where `scripts/install.sh` copies the runtime bundle. Root-owned, read-only to users. */
-export const INSTALL_ROOT = "/usr/local/lib/localhost-aliases";
-
-/** Control socket for the privileged helper. Created by root, chowned to the install user, mode 0600. */
-export const SOCKET_PATH = "/var/run/localhost-aliases.sock";
+export const APP_NAME = "Localhost Aliases";
+export const BUNDLE_ID = "dev.localhost-aliases.app";
 
 export const HOSTS_PATH = process.env.LA_HOSTS_PATH ?? "/etc/hosts";
 
-export const HELPER_PLIST_PATH = `/Library/LaunchDaemons/${HELPER_LABEL}.plist`;
-
-/** User config directory. `LA_CONFIG_DIR` overrides it (used by every test suite). */
+/** User state directory. LA_CONFIG_DIR overrides it — every test must set it. */
 export function configDir(): string {
   return process.env.LA_CONFIG_DIR ?? join(homedir(), ".config", "localhost-aliases");
 }
-
 export function configPath(): string {
   return join(configDir(), "config.json");
 }
 
-/** Local certificate authority material. Key is written 0600. */
+/** Desired state handed to the privileged script. User-writable by design. */
+export function desiredStatePath(): string {
+  return join(configDir(), "desired-state.json");
+}
+/** Routes the root forwarder watches. A port-only change is picked up without a prompt. */
+export function routesPath(): string {
+  return join(configDir(), "routes.json");
+}
+/** Status the root forwarder writes so the UI can show real state without privileges. */
+export function forwarderStatusPath(): string {
+  return join(configDir(), "forwarder-status.json");
+}
+/**
+ * Heartbeat the app touches. The forwarder runs as root and a user process cannot kill it,
+ * so it watches this file and exits on its own once the app stops touching it.
+ */
+export function livenessPath(): string {
+  return join(configDir(), "liveness");
+}
+/** How stale the heartbeat may get before the forwarder exits. */
+export const LIVENESS_TIMEOUT_MS = 15_000;
+export const LIVENESS_TOUCH_MS = 5_000;
+
 export function caDir(): string {
   return join(configDir(), "ca");
 }
@@ -38,33 +51,68 @@ export function caCertPath(): string {
 export function caKeyPath(): string {
   return join(caDir(), "rootCA-key.pem");
 }
-/** Leaf certificate covering every enabled alias hostname via SAN entries. */
-export function leafCertPath(): string {
-  return join(caDir(), "aliases.pem");
+export function dashboardCertPath(): string {
+  return join(caDir(), "dashboard.pem");
 }
-export function leafKeyPath(): string {
-  return join(caDir(), "aliases-key.pem");
+export function dashboardKeyPath(): string {
+  return join(caDir(), "dashboard-key.pem");
 }
 
 export function logDir(): string {
   return process.env.LA_LOG_DIR ?? join(homedir(), "Library", "Logs", "localhost-aliases");
 }
 
-export function agentPlistPath(): string {
-  return join(homedir(), "Library", "LaunchAgents", `${AGENT_LABEL}.plist`);
-}
-
-/** Claude Code stores MCP servers in ~/.claude.json under `mcpServers`. */
 export function claudeConfigPath(): string {
   return process.env.LA_CLAUDE_CONFIG ?? join(homedir(), ".claude.json");
 }
-
-/** Codex stores MCP servers in ~/.codex/config.toml under `[mcp_servers.*]`. */
 export function codexConfigPath(): string {
   return process.env.LA_CODEX_CONFIG ?? join(homedir(), ".codex", "config.toml");
 }
 
-/** Base URL of the user-space web API. Read by the MCP server and the tray. */
+/**
+ * Runtime layout. In a built .app everything lives under Contents/Resources; in a git
+ * checkout it lives in the workspace. Nothing may assume a checkout.
+ */
+export interface RuntimeLayout {
+  mode: "bundle" | "dev";
+  /** Root the other paths hang off: Contents/Resources, or the repo root. */
+  root: string;
+  bun: string;
+  dashboardDir: string;
+  forwarder: string;
+  applyScript: string;
+  mcpEntry: string;
+}
+
+export function runtimeLayout(): RuntimeLayout {
+  const override = process.env.LA_RUNTIME_ROOT;
+  const exec = process.execPath;
+  const marker = ".app/Contents/";
+  const idx = exec.indexOf(marker);
+  if (!override && idx !== -1) {
+    const resources = join(exec.slice(0, idx + marker.length), "Resources");
+    return {
+      mode: "bundle",
+      root: resources,
+      bun: join(resources, "bin", "bun"),
+      dashboardDir: join(resources, "dashboard"),
+      forwarder: join(resources, "forwarder"),
+      applyScript: join(resources, "privileged", "apply.sh"),
+      mcpEntry: join(resources, "mcp"),
+    };
+  }
+  const root = override ?? process.env.LA_REPO_ROOT ?? process.cwd();
+  return {
+    mode: "dev",
+    root,
+    bun: process.env.LA_BUN ?? "bun",
+    dashboardDir: join(root, "packages", "dashboard"),
+    forwarder: join(root, "packages", "forwarder", "src", "index.ts"),
+    applyScript: join(root, "packages", "privileged", "apply.sh"),
+    mcpEntry: join(root, "packages", "mcp", "src", "index.ts"),
+  };
+}
+
 export function dashboardUrl(port = Number(process.env.LA_DASHBOARD_PORT ?? 7788)): string {
   return `http://127.0.0.1:${port}`;
 }

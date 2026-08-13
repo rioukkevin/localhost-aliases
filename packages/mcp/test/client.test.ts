@@ -1,99 +1,106 @@
-/**
- * The HTTP layer in isolation: every failure mode has to come back as a typed
- * result with a message a coding agent can act on.
- */
-import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { fetchAliases, postAlias } from "../src/client.ts";
-import { freePort } from "./fixtures/mcp-harness.ts";
+import { describe, expect, test } from "bun:test";
+import { DashboardApiError, DashboardClient, DashboardUnreachableError } from "../src/client.ts";
+import { alias, stubFetch } from "./stub.ts";
 
-let handler: (request: Request) => Response = () => new Response("{}");
-let server: ReturnType<typeof Bun.serve>;
-const previousPort = process.env.LA_DASHBOARD_PORT;
+const BASE = "http://127.0.0.1:7788";
 
-beforeAll(() => {
-  server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: (request) => handler(request) });
-  process.env.LA_DASHBOARD_PORT = String(server.port);
-});
-
-afterAll(async () => {
-  await server.stop(true);
-  if (previousPort === undefined) delete process.env.LA_DASHBOARD_PORT;
-  else process.env.LA_DASHBOARD_PORT = previousPort;
-});
-
-afterEach(() => {
-  handler = () => new Response("{}");
-});
-
-function respond(body: unknown, status: number): void {
-  handler = () =>
-    new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+function client(routes: Parameters<typeof stubFetch>[0]) {
+  const { fetch, requests } = stubFetch(routes);
+  return { client: new DashboardClient({ baseUrl: BASE, fetch }), requests };
 }
 
-describe("dashboard client", () => {
-  test("a closed port becomes an actionable 'unreachable' result", async () => {
-    const dead = await freePort();
-    process.env.LA_DASHBOARD_PORT = String(dead);
-    const result = await fetchAliases();
-    process.env.LA_DASHBOARD_PORT = String(server.port);
-
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.kind).toBe("unreachable");
-    expect(result.message).toContain("not reachable");
-    expect(result.message).toContain("bun run dev");
-    expect(result.message).toContain("LA_DASHBOARD_PORT");
+describe("DashboardClient", () => {
+  test("unwraps the documented envelope", async () => {
+    const { client: c } = client({ "GET /api/aliases": { body: { aliases: [alias()] } } });
+    expect((await c.listAliases()).map((a) => a.hostname)).toEqual(["myapp.local"]);
   });
 
-  test("200 unwraps the aliases array", async () => {
-    respond({ aliases: [{ id: "a", name: "x", port: 3000 }] }, 200);
-    const result = await fetchAliases();
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.data).toHaveLength(1);
+  test("also accepts a bare array", async () => {
+    const { client: c } = client({ "GET /api/aliases": { body: [alias({ name: "web" })] } });
+    expect((await c.listAliases())[0]?.hostname).toBe("web.local");
   });
 
-  test("a 200 without the expected key degrades to an empty list", async () => {
-    respond({}, 200);
-    const result = await fetchAliases();
-    expect(result.ok && result.data).toEqual([]);
+  test("returns an empty list when the shape is unrecognised", async () => {
+    const { client: c } = client({ "GET /api/aliases": { body: { nope: 1 } } });
+    expect(await c.listAliases()).toEqual([]);
   });
 
-  test("400 keeps the field-level issues", async () => {
-    respond({ error: "invalid", issues: [{ field: "port", message: "must be 1-65535" }] }, 400);
-    const result = await postAlias({ name: "x", port: 99999 });
-    expect(result.ok).toBe(false);
-    if (result.ok || result.kind !== "validation") return;
-    expect(result.status).toBe(400);
-    expect(result.issues[0]?.field).toBe("port");
+  test("POST sends JSON and unwraps the created alias", async () => {
+    const { client: c, requests } = client({
+      "POST /api/aliases": { status: 201, body: { alias: alias({ name: "api", port: 4000 }) } },
+    });
+    const created = await c.createAlias({ name: "api", port: 4000 });
+    expect(created.alias.name).toBe("api");
+    expect(requests[0]).toEqual({ method: "POST", path: "/api/aliases", body: { name: "api", port: 4000 } });
   });
 
-  test("404 and 500 are plain HTTP failures carrying the server's message", async () => {
-    respond({ error: "no such alias" }, 404);
-    const missing = await fetchAliases();
-    expect(missing.ok).toBe(false);
-    if (!missing.ok) {
-      expect(missing.kind).toBe("http");
-      expect(missing.message).toBe("no such alias");
-    }
-
-    respond({ error: "boom" }, 500);
-    const broken = await fetchAliases();
-    expect(broken.ok === false && broken.kind === "http" && broken.status).toBe(500);
+  test("DELETE percent-encodes the id", async () => {
+    const { client: c, requests } = client({ "DELETE /api/aliases/a%2Fb": { body: { ok: true } } });
+    await c.deleteAlias("a/b");
+    expect(requests[0]?.path).toBe("/api/aliases/a%2Fb");
   });
 
-  test("a non-JSON error body still yields a readable message", async () => {
-    handler = () => new Response("<html>502</html>", { status: 502 });
-    const result = await fetchAliases();
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.kind).toBe("http");
-    expect(result.message).toContain("502");
+  test("a connection failure becomes DashboardUnreachableError", async () => {
+    const { client: c } = client({ "GET /api/aliases": { networkError: true } });
+    const error = await c.listAliases().catch((e) => e);
+    expect(error).toBeInstanceOf(DashboardUnreachableError);
+    expect(error.message).toContain("http://127.0.0.1:7788");
+    expect(error.message).toContain("menu-bar app");
+    expect(error.message).not.toContain("Unable to connect"); // no raw cause leaks out
   });
 
-  test("issues on a non-400 status are still treated as validation feedback", async () => {
-    respond({ error: "conflict", issues: [{ field: "name", message: "already in use" }] }, 409);
-    const result = await postAlias({ name: "dup", port: 3000 });
-    expect(result.ok === false && result.kind).toBe("validation");
+  test("an error status surfaces the API's message", async () => {
+    const { client: c } = client({
+      "POST /api/aliases": { status: 409, body: { error: "myapp is already taken" } },
+    });
+    const error = await c.createAlias({ name: "myapp", port: 3000 }).catch((e) => e);
+    expect(error).toBeInstanceOf(DashboardApiError);
+    expect(error.status).toBe(409);
+    expect(error.message).toBe("myapp is already taken");
+  });
+
+  test("an error status surfaces ValidationError issues", async () => {
+    const { client: c } = client({
+      "POST /api/aliases": { status: 400, body: { issues: [{ field: "port", message: "out of range" }] } },
+    });
+    const error = await c.createAlias({ name: "x", port: 0 }).catch((e) => e);
+    expect(error.message).toBe("port: out of range");
+  });
+
+  test("a non-JSON error body is still readable", async () => {
+    const { client: c } = client({ "GET /api/aliases": { status: 500, raw: "boom" } });
+    const error = await c.listAliases().catch((e) => e);
+    expect(error.message).toBe("HTTP 500: boom");
+  });
+
+  test("carries the sync report back to the caller", async () => {
+    const { client: c } = client({
+      "POST /api/aliases": {
+        status: 201,
+        body: { alias: alias(), sync: { applied: false, needsPrompt: true, privileged: ["add 127.0.0.2 to lo0"] } },
+      },
+    });
+    const { sync } = await c.createAlias({ name: "myapp", port: 3000 });
+    expect(sync?.needsPrompt).toBe(true);
+    expect(sync?.privileged).toEqual(["add 127.0.0.2 to lo0"]);
+  });
+
+  test("DELETE reports the id even when the body omits it", async () => {
+    const { client: c } = client({ "DELETE /api/aliases/x": { raw: "" } });
+    expect((await c.deleteAlias("x")).deleted).toBe("x");
+  });
+
+  test("POST /api/projects/link passes the whole body through", async () => {
+    const { client: c, requests } = client({
+      "POST /api/projects/link": { body: { project: { path: "/p", name: "p", hasWorkspaceFile: false, aliases: [] }, created: [], updated: [], workspaceFile: null } },
+    });
+    await c.linkProject({ path: "/p", aliasIds: ["a1"], importWorkspace: false, writeWorkspaceFile: true });
+    expect(requests[0]?.body).toEqual({ path: "/p", aliasIds: ["a1"], importWorkspace: false, writeWorkspaceFile: true });
+  });
+
+  test("a trailing slash on the base url does not double up", async () => {
+    const { fetch, requests } = stubFetch({ "GET /api/aliases": { body: { aliases: [] } } });
+    await new DashboardClient({ baseUrl: `${BASE}/`, fetch }).listAliases();
+    expect(requests[0]?.path).toBe("/api/aliases");
   });
 });

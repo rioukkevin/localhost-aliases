@@ -1,47 +1,30 @@
 /**
- * The persisted `Config` at `configPath()`.
+ * The JSON config store at configPath().
  *
- * Three guarantees:
- *  - writes are atomic (temp file in the same directory + rename)
- *  - a corrupt or unexpected file is backed up and replaced instead of crashing
- *  - every mutation runs inside `withConfigLock`, so concurrent API calls queue
- *    up instead of interleaving read-modify-write cycles and losing entries.
+ * Everything that mutates goes through one in-process mutex and one atomic write, so
+ * the dashboard's API routes cannot interleave and lose an alias. A corrupt file is
+ * moved aside rather than thrown at the user: the app must always start.
  */
-import { mkdir, rename, unlink } from "node:fs/promises";
-import { dirname } from "node:path";
 import { configPath } from "./paths.ts";
 import {
   DEFAULT_CONFIG,
+  RESERVED_ALIAS_NAME,
   ValidationError,
   type Alias,
   type Config,
   type CreateAliasInput,
   type UpdateAliasInput,
-  type ValidationIssue,
 } from "./types.ts";
-import {
-  DEFAULT_TARGET,
-  assertValidAlias,
-  normalizeName,
-  normalizeTld,
-  validateName,
-  validatePort,
-  validateTarget,
-  validateTld,
-} from "./validation.ts";
+import { allocateIp, isValidIpv4 } from "./ips.ts";
+import { assertValidAlias, assertValidPort, assertValidTld, isValidPort, isValidTld, normalizeName } from "./validation.ts";
+import { backupFile, readFileOrNull, writeFileAtomic } from "./atomic.ts";
 
-// ---------------------------------------------------------------------------
-// Mutex
-// ---------------------------------------------------------------------------
+// --- mutex ------------------------------------------------------------------
 
 let queue: Promise<unknown> = Promise.resolve();
 
-/**
- * Serializes all mutations; exported for tests.
- * Not reentrant: never call it from inside another `withConfigLock` callback.
- */
-export function withConfigLock<T>(fn: () => Promise<T>): Promise<T> {
-  // `then(fn, fn)` so a rejected predecessor never blocks the queue forever.
+/** Serialises every read-or-write of the config within this process. */
+function withLock<T>(fn: () => Promise<T>): Promise<T> {
   const run = queue.then(fn, fn);
   queue = run.then(
     () => undefined,
@@ -50,259 +33,275 @@ export function withConfigLock<T>(fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
-// ---------------------------------------------------------------------------
-// Disk IO
-// ---------------------------------------------------------------------------
+// --- shape ------------------------------------------------------------------
 
-function seed(): Config {
-  return { ...DEFAULT_CONFIG, aliases: [] };
+function nowIso(): string {
+  return new Date().toISOString();
 }
 
-/** Atomic: rename(2) inside one directory is atomic, so readers see old or new. */
-async function writeConfig(config: Config): Promise<Config> {
-  const path = configPath();
-  await mkdir(dirname(path), { recursive: true });
-  const tmp = `${path}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
-  try {
-    await Bun.write(tmp, `${JSON.stringify(config, null, 2)}\n`);
-    await rename(tmp, path);
-  } catch (error) {
-    await unlink(tmp).catch(() => undefined);
-    throw error;
-  }
-  return config;
+function reservedAlias(ip: string, port: number): Alias {
+  const ts = nowIso();
+  return {
+    id: crypto.randomUUID(),
+    name: RESERVED_ALIAS_NAME,
+    port,
+    ip,
+    projectPath: null,
+    description: "The Localhost Aliases dashboard.",
+    enabled: true,
+    reserved: true,
+    createdAt: ts,
+    updatedAt: ts,
+  };
 }
 
-/** Keeps the unreadable file around for the user instead of deleting it. */
-async function backupBrokenConfig(): Promise<void> {
-  const path = configPath();
-  try {
-    await Bun.write(`${path}.bak`, Bun.file(path));
-  } catch {
-    // A backup failure must never prevent recovery.
-  }
+function isAliasish(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
-/** Seeds defaults if missing; recovers by backing up anything unreadable. */
-export async function loadConfig(): Promise<Config> {
-  const file = Bun.file(configPath());
-  if (!(await file.exists())) return await writeConfig(seed());
-
-  let raw: unknown;
-  try {
-    raw = JSON.parse(await file.text());
-  } catch {
-    await backupBrokenConfig();
-    return await writeConfig(seed());
-  }
-
-  const migrated = migrateConfig(raw);
-  if (migrated === null) {
-    await backupBrokenConfig();
-    return await writeConfig(seed());
-  }
-  return migrated;
+function coerceAlias(raw: Record<string, unknown>, taken: Set<string>): Alias | null {
+  const name = typeof raw.name === "string" ? normalizeName(raw.name) : "";
+  if (name === "") return null;
+  const port = typeof raw.port === "number" ? raw.port : Number(raw.port);
+  if (!isValidPort(port)) return null;
+  const ip = typeof raw.ip === "string" && isValidIpv4(raw.ip) && !taken.has(raw.ip) ? raw.ip : allocateIp(taken);
+  taken.add(ip);
+  const ts = nowIso();
+  return {
+    id: typeof raw.id === "string" && raw.id !== "" ? raw.id : crypto.randomUUID(),
+    name,
+    port,
+    ip,
+    projectPath: typeof raw.projectPath === "string" ? raw.projectPath : null,
+    description: typeof raw.description === "string" ? raw.description : null,
+    enabled: raw.enabled !== false,
+    reserved: raw.reserved === true || name === RESERVED_ALIAS_NAME,
+    createdAt: typeof raw.createdAt === "string" ? raw.createdAt : ts,
+    updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : ts,
+  };
 }
 
-/** Atomic write. Does not take the lock — mutations already hold it. */
-export async function saveConfig(config: Config): Promise<Config> {
-  return await writeConfig(config);
-}
+/**
+ * Bring any parsed JSON up to the current contract. Returns the config plus whether
+ * anything had to change, so a repaired file is written back once.
+ */
+function normalizeConfig(parsed: unknown): { config: Config; changed: boolean } {
+  const raw = (typeof parsed === "object" && parsed !== null ? parsed : {}) as Record<string, unknown>;
+  let changed = false;
 
-// ---------------------------------------------------------------------------
-// Defensive migration
-// ---------------------------------------------------------------------------
+  const tld = typeof raw.tld === "string" && isValidTld(raw.tld) ? raw.tld : DEFAULT_CONFIG.tld;
+  if (tld !== raw.tld) changed = true;
+  const dashboardPort = isValidPort(raw.dashboardPort) ? raw.dashboardPort : DEFAULT_CONFIG.dashboardPort;
+  if (dashboardPort !== raw.dashboardPort) changed = true;
+  const https = typeof raw.https === "boolean" ? raw.https : DEFAULT_CONFIG.https;
+  if (https !== raw.https) changed = true;
+  if (raw.version !== 2) changed = true;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function portOr(value: unknown, fallback: number): number {
-  return validatePort(value).length === 0 ? (value as number) : fallback;
-}
-
-function isoOr(value: unknown, fallback: string): string {
-  if (typeof value !== "string") return fallback;
-  return Number.isNaN(Date.parse(value)) ? fallback : value;
-}
-
-/** Returns null when the shape is unusable and the file should be replaced. */
-function migrateConfig(raw: unknown): Config | null {
-  if (!isRecord(raw)) return null;
-  if (raw.aliases !== undefined && !Array.isArray(raw.aliases)) return null;
-
-  const seen = new Set<string>();
+  const taken = new Set<string>();
   const aliases: Alias[] = [];
-  for (const entry of (raw.aliases ?? []) as unknown[]) {
-    const alias = migrateAlias(entry);
-    if (alias === null || seen.has(alias.name)) continue;
-    seen.add(alias.name);
+  const rawAliases = Array.isArray(raw.aliases) ? raw.aliases : [];
+  if (!Array.isArray(raw.aliases)) changed = true;
+
+  for (const entry of rawAliases) {
+    if (!isAliasish(entry)) {
+      changed = true;
+      continue;
+    }
+    const alias = coerceAlias(entry, taken);
+    if (!alias) {
+      changed = true;
+      continue;
+    }
+    if (alias.ip !== entry.ip || alias.name !== entry.name || alias.id !== entry.id) changed = true;
+    if (aliases.some((a) => a.name === alias.name)) {
+      changed = true;
+      continue;
+    }
     aliases.push(alias);
   }
 
-  const tld = typeof raw.tld === "string" && validateTld(raw.tld).length === 0
-    ? normalizeTld(raw.tld)
-    : DEFAULT_CONFIG.tld;
+  const reservedIdx = aliases.findIndex((a) => a.name === RESERVED_ALIAS_NAME);
+  if (reservedIdx === -1) {
+    // The dashboard alias always exists and always holds the first free address.
+    aliases.unshift(reservedAlias(allocateIp(taken), dashboardPort));
+    changed = true;
+  } else {
+    const reserved = aliases[reservedIdx]!;
+    if (!reserved.reserved || !reserved.enabled || reserved.port !== dashboardPort) {
+      aliases[reservedIdx] = { ...reserved, reserved: true, enabled: true, port: dashboardPort };
+      changed = true;
+    }
+  }
 
-  return {
-    version: 1,
-    tld,
-    httpPort: portOr(raw.httpPort, DEFAULT_CONFIG.httpPort),
-    httpsPort: portOr(raw.httpsPort, DEFAULT_CONFIG.httpsPort),
-    dashboardPort: portOr(raw.dashboardPort, DEFAULT_CONFIG.dashboardPort),
-    https: typeof raw.https === "boolean" ? raw.https : DEFAULT_CONFIG.https,
-    aliases,
-  };
+  return { config: { version: 2, tld, dashboardPort, https, aliases }, changed };
 }
 
-/** Drops entries we cannot make sense of; fills in everything else. */
-function migrateAlias(entry: unknown): Alias | null {
-  if (!isRecord(entry)) return null;
-  const name = normalizeName(typeof entry.name === "string" ? entry.name : "");
-  if (validateName(name).length > 0) return null;
-  if (validatePort(entry.port).length > 0) return null;
+// --- io ---------------------------------------------------------------------
 
-  const now = new Date().toISOString();
-  const target = typeof entry.target === "string" && validateTarget(entry.target).length === 0
-    ? entry.target.trim().toLowerCase()
-    : DEFAULT_TARGET;
+async function readUnlocked(): Promise<Config> {
+  const path = configPath();
+  const text = await readFileOrNull(path);
 
-  return {
-    id: typeof entry.id === "string" && entry.id.length > 0 ? entry.id : crypto.randomUUID(),
-    name,
-    port: entry.port as number,
-    target,
-    projectPath: typeof entry.projectPath === "string" ? entry.projectPath : null,
-    description: typeof entry.description === "string" ? entry.description : null,
-    enabled: typeof entry.enabled === "boolean" ? entry.enabled : true,
-    createdAt: isoOr(entry.createdAt, now),
-    updatedAt: isoOr(entry.updatedAt, now),
-  };
+  if (text === null) {
+    const { config } = normalizeConfig({ ...DEFAULT_CONFIG, aliases: [] });
+    await writeFileAtomic(path, serialize(config));
+    return config;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    await backupFile(path, "corrupt");
+    const { config } = normalizeConfig({ ...DEFAULT_CONFIG, aliases: [] });
+    await writeFileAtomic(path, serialize(config));
+    return config;
+  }
+
+  const { config, changed } = normalizeConfig(parsed);
+  if (changed) await writeFileAtomic(path, serialize(config));
+  return config;
 }
 
-// ---------------------------------------------------------------------------
-// CRUD
-// ---------------------------------------------------------------------------
+function serialize(config: Config): string {
+  return `${JSON.stringify(config, null, 2)}\n`;
+}
+
+async function writeUnlocked(config: Config): Promise<void> {
+  await writeFileAtomic(configPath(), serialize(config));
+}
+
+/** Load the config, seeding or repairing the file if needed. */
+export function loadConfig(): Promise<Config> {
+  return withLock(readUnlocked);
+}
+
+/** Read-modify-write under the mutex. */
+async function mutate<T>(fn: (config: Config) => Promise<T> | T): Promise<T> {
+  return withLock(async () => {
+    const config = await readUnlocked();
+    const result = await fn(config);
+    await writeUnlocked(config);
+    return result;
+  });
+}
+
+// --- CRUD -------------------------------------------------------------------
 
 export async function listAliases(): Promise<Alias[]> {
-  const config = await loadConfig();
-  return config.aliases;
+  return (await loadConfig()).aliases;
 }
 
-/** Accepts an alias id or a bare name ("myapp"), case-insensitive. */
-export async function getAlias(idOrName: string): Promise<Alias | null> {
-  const config = await loadConfig();
-  const byId = config.aliases.find((alias) => alias.id === idOrName);
-  if (byId) return byId;
-  const name = normalizeName(idOrName ?? "");
-  if (name.length === 0) return null;
-  return config.aliases.find((alias) => alias.name === name) ?? null;
+export async function getAlias(id: string): Promise<Alias | null> {
+  return (await loadConfig()).aliases.find((a) => a.id === id) ?? null;
 }
 
-function notFound(id: string): Error {
-  return new Error(`Alias not found: ${id}`);
+export async function getAliasByName(name: string): Promise<Alias | null> {
+  const wanted = normalizeName(name);
+  return (await loadConfig()).aliases.find((a) => a.name === wanted) ?? null;
 }
 
-export async function createAlias(
-  input: CreateAliasInput,
-): Promise<{ config: Config; alias: Alias }> {
-  return withConfigLock(async () => {
-    const config = await loadConfig();
-    assertValidAlias(input, config.aliases);
+export async function createAlias(input: CreateAliasInput): Promise<Alias> {
+  return mutate((config) => {
+    const name = typeof input.name === "string" ? normalizeName(input.name) : input.name;
+    assertValidAlias({ ...input, name }, config.aliases, { tld: config.tld });
 
-    const now = new Date().toISOString();
+    const ts = nowIso();
     const alias: Alias = {
       id: crypto.randomUUID(),
-      name: normalizeName(input.name),
+      name: name as string,
       port: input.port,
-      target: (input.target ?? DEFAULT_TARGET).trim().toLowerCase(),
+      ip: allocateIp(config.aliases.map((a) => a.ip)),
       projectPath: input.projectPath ?? null,
       description: input.description ?? null,
       enabled: input.enabled ?? true,
-      createdAt: now,
-      updatedAt: now,
+      reserved: false,
+      createdAt: ts,
+      updatedAt: ts,
     };
-
-    const next = await writeConfig({ ...config, aliases: [...config.aliases, alias] });
-    return { config: next, alias };
+    config.aliases.push(alias);
+    return alias;
   });
 }
 
-export async function updateAlias(
-  id: string,
-  input: UpdateAliasInput,
-): Promise<{ config: Config; alias: Alias }> {
-  return withConfigLock(async () => {
-    const config = await loadConfig();
-    const current = config.aliases.find((alias) => alias.id === id);
-    if (!current) throw notFound(id);
-
-    const candidate: CreateAliasInput = {
-      name: input.name ?? current.name,
-      port: input.port ?? current.port,
-      target: input.target ?? current.target,
-    };
-    assertValidAlias(candidate, config.aliases, { excludeId: id });
-
-    const alias: Alias = {
-      ...current,
-      name: normalizeName(candidate.name),
-      port: candidate.port,
-      target: (candidate.target ?? DEFAULT_TARGET).trim().toLowerCase(),
-      projectPath: input.projectPath !== undefined ? input.projectPath : current.projectPath,
-      description: input.description !== undefined ? input.description : current.description,
-      enabled: input.enabled !== undefined ? input.enabled : current.enabled,
-      updatedAt: new Date().toISOString(),
-    };
-
-    const next = await writeConfig({
-      ...config,
-      aliases: config.aliases.map((entry) => (entry.id === id ? alias : entry)),
-    });
-    return { config: next, alias };
-  });
-}
-
-export async function deleteAlias(id: string): Promise<{ config: Config; alias: Alias }> {
-  return withConfigLock(async () => {
-    const config = await loadConfig();
-    const alias = config.aliases.find((entry) => entry.id === id);
-    if (!alias) throw notFound(id);
-
-    const next = await writeConfig({
-      ...config,
-      aliases: config.aliases.filter((entry) => entry.id !== id),
-    });
-    return { config: next, alias };
-  });
-}
-
-export async function updateSettings(
-  patch: Partial<Omit<Config, "aliases" | "version">>,
-): Promise<Config> {
-  return withConfigLock(async () => {
-    const config = await loadConfig();
-    const issues: ValidationIssue[] = [];
-    const next: Config = { ...config };
-
-    if (patch.tld !== undefined) {
-      issues.push(...validateTld(patch.tld));
-      next.tld = normalizeTld(patch.tld);
+export async function updateAlias(id: string, input: UpdateAliasInput): Promise<Alias> {
+  return mutate((config) => {
+    const index = config.aliases.findIndex((a) => a.id === id);
+    const current = config.aliases[index];
+    if (index === -1 || !current) {
+      throw new ValidationError([{ field: "id", message: `No alias with id "${id}".` }]);
     }
-    for (const key of ["httpPort", "httpsPort", "dashboardPort"] as const) {
-      const value = patch[key];
-      if (value === undefined) continue;
-      issues.push(...validatePort(value).map((entry) => ({ ...entry, field: key })));
-      next[key] = value;
+
+    const name = typeof input.name === "string" ? normalizeName(input.name) : undefined;
+    if (current.reserved) {
+      if (name !== undefined && name !== current.name) {
+        throw new ValidationError([
+          { field: "name", message: "The dashboard alias cannot be renamed." },
+        ]);
+      }
+      if (input.enabled === false) {
+        throw new ValidationError([
+          { field: "enabled", message: "The dashboard alias cannot be disabled." },
+        ]);
+      }
+    }
+
+    assertValidAlias({ ...input, ...(name !== undefined ? { name } : {}) }, config.aliases, {
+      excludeId: id,
+      partial: true,
+      allowReserved: current.reserved,
+      tld: config.tld,
+    });
+
+    const next: Alias = {
+      ...current,
+      ...(name !== undefined ? { name } : {}),
+      ...(input.port !== undefined ? { port: input.port } : {}),
+      ...(input.projectPath !== undefined ? { projectPath: input.projectPath ?? null } : {}),
+      ...(input.description !== undefined ? { description: input.description ?? null } : {}),
+      ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
+      updatedAt: nowIso(),
+    };
+    // The dashboard alias's port is a mirror of dashboardPort, never edited on its own.
+    if (current.reserved) next.port = config.dashboardPort;
+    config.aliases[index] = next;
+    return next;
+  });
+}
+
+export async function deleteAlias(id: string): Promise<void> {
+  return mutate((config) => {
+    const alias = config.aliases.find((a) => a.id === id);
+    if (!alias) throw new ValidationError([{ field: "id", message: `No alias with id "${id}".` }]);
+    if (alias.reserved) {
+      throw new ValidationError([
+        { field: "id", message: "The dashboard alias cannot be deleted." },
+      ]);
+    }
+    config.aliases = config.aliases.filter((a) => a.id !== id);
+  });
+}
+
+export type SettingsPatch = Partial<Pick<Config, "tld" | "dashboardPort" | "https">>;
+
+export async function updateSettings(patch: SettingsPatch): Promise<Config> {
+  return mutate((config) => {
+    if (patch.tld !== undefined) {
+      assertValidTld(patch.tld);
+      config.tld = patch.tld.trim().toLowerCase();
+    }
+    if (patch.dashboardPort !== undefined) {
+      assertValidPort(patch.dashboardPort, "dashboardPort");
+      config.dashboardPort = patch.dashboardPort;
     }
     if (patch.https !== undefined) {
       if (typeof patch.https !== "boolean") {
-        issues.push({ field: "https", message: "must be a boolean" });
+        throw new ValidationError([{ field: "https", message: "https must be true or false." }]);
       }
-      next.https = patch.https;
+      config.https = patch.https;
     }
-
-    if (issues.length > 0) throw new ValidationError(issues);
-    return await writeConfig(next);
+    const reserved = config.aliases.find((a) => a.reserved);
+    if (reserved) reserved.port = config.dashboardPort;
+    return config;
   });
 }

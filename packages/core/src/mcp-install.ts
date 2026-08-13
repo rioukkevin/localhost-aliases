@@ -1,279 +1,183 @@
 /**
- * One-click MCP registration for Claude Code (JSON) and Codex (TOML).
+ * Installing the stdio MCP server into Claude Code and Codex.
  *
- * The two `upsert*` functions are pure string -> string transforms so they can be
- * unit-tested hard: these files belong to the user and may contain anything.
- * Everything we do not own is preserved verbatim, comments included.
+ * The entrypoint is resolved through runtimeLayout(), never import.meta.dir: this module
+ * is also imported by the Next dashboard, where webpack rewrites import.meta.dir to
+ * undefined and would silently produce a broken command.
  */
-import { existsSync } from "node:fs";
-import { mkdir, rename } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { INSTALL_ROOT, claudeConfigPath, codexConfigPath } from "./paths.ts";
-import type { McpClientId, McpClientState } from "./types.ts";
+import { claudeConfigPath, codexConfigPath, runtimeLayout } from "./paths.ts";
+import { backupFile, readFileOrNull, writeFileAtomic } from "./atomic.ts";
 
-/** Key under `mcpServers` in ~/.claude.json. */
-export const MCP_SERVER_KEY = "localhost-aliases";
-/** TOML table in ~/.codex/config.toml. TOML bare keys cannot contain "-". */
-export const MCP_CODEX_TABLE = "mcp_servers.localhost_aliases";
+export const MCP_SERVER_NAME = "localhost-aliases";
 
-/** packages/core/src -> packages/mcp/src/index.ts */
-const ENTRY_FROM_CORE_SRC = ["..", "..", "mcp", "src", "index.ts"] as const;
-/** <workspace root> -> packages/mcp/src/index.ts */
-const ENTRY_FROM_ROOT = ["packages", "mcp", "src", "index.ts"] as const;
+export interface McpServerSpec {
+  command: string;
+  args: string[];
+  env?: Record<string, string>;
+}
+
+export type McpClientId = "claude" | "codex";
+
+export interface McpClient {
+  id: McpClientId;
+  name: string;
+  configPath: string;
+  /** The client's config file exists. */
+  installed: boolean;
+  /** Our server is already registered in it. */
+  configured: boolean;
+}
 
 /**
- * Directory of this module, or null when the runtime does not expose one.
- *
- * `import.meta.dir` (Bun) and `import.meta.dirname` are replaced with `undefined`
- * by webpack, so any Next build of this package used to resolve against
- * `undefined` and throw. `import.meta.url` survives bundling but then points at
- * the bundle, not at the source tree — hence every candidate below is checked
- * against the filesystem instead of being trusted.
+ * In a bundle mcpEntry is a compiled binary and runs directly; in a checkout it is a
+ * .ts file and needs Bun in front of it.
  */
-function moduleDir(): string | null {
-  // Each property is read as a direct `import.meta.x` member access: webpack
-  // rewrites those to `undefined`, but rewrites a bare `import.meta` to `{}`.
-  const fromDirname = (import.meta as { dirname?: string }).dirname;
-  if (typeof fromDirname === "string" && fromDirname !== "") return fromDirname;
+export function mcpServerSpec(dashboardPort?: number): McpServerSpec {
+  const layout = runtimeLayout();
+  const base: McpServerSpec =
+    layout.mode === "bundle"
+      ? { command: layout.mcpEntry, args: [] }
+      : { command: layout.bun, args: ["run", layout.mcpEntry] };
+  return dashboardPort === undefined
+    ? base
+    : { ...base, env: { LA_DASHBOARD_PORT: String(dashboardPort) } };
+}
 
-  const fromDir = (import.meta as { dir?: string }).dir;
-  if (typeof fromDir === "string" && fromDir !== "") return fromDir;
+// --- Claude Code (~/.claude.json) -------------------------------------------
 
-  const url = (import.meta as { url?: string }).url;
-  if (typeof url === "string" && url.startsWith("file:")) {
+/**
+ * Pure: takes the current file contents (null when absent) and returns the new ones.
+ * Every other key is preserved. Malformed JSON throws rather than being overwritten —
+ * this file holds the user's entire Claude Code configuration.
+ */
+export function upsertClaudeJson(existing: string | null, spec: McpServerSpec): string {
+  let root: Record<string, unknown> = {};
+  if (existing !== null && existing.trim() !== "") {
+    let parsed: unknown;
     try {
-      return dirname(fileURLToPath(url));
+      parsed = JSON.parse(existing);
     } catch {
-      return null;
+      throw new Error("~/.claude.json is not valid JSON; fix it before installing the MCP server.");
     }
-  }
-  return null;
-}
-
-/** Every plausible location of the entrypoint, best guess first. */
-function entrypointCandidates(from: string | null): string[] {
-  const candidates: string[] = [];
-  if (from !== null) candidates.push(resolve(from, ...ENTRY_FROM_CORE_SRC));
-
-  // A bundled core has no useful module dir, so the workspace root is found by
-  // walking up from wherever the process actually runs (packages/web, e.g.).
-  for (const start of [from, process.cwd()]) {
-    if (start === null) continue;
-    let current = resolve(start);
-    for (;;) {
-      candidates.push(resolve(current, ...ENTRY_FROM_ROOT));
-      const parent = dirname(current);
-      if (parent === current) break;
-      current = parent;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      throw new Error("~/.claude.json does not contain a JSON object.");
     }
+    root = parsed as Record<string, unknown>;
   }
 
-  candidates.push(resolve(INSTALL_ROOT, ...ENTRY_FROM_ROOT));
-  return candidates;
+  const current = root.mcpServers;
+  const servers: Record<string, unknown> =
+    typeof current === "object" && current !== null && !Array.isArray(current)
+      ? { ...(current as Record<string, unknown>) }
+      : {};
+  servers[MCP_SERVER_NAME] = spec;
+
+  return `${JSON.stringify({ ...root, mcpServers: servers }, null, 2)}\n`;
 }
 
-/**
- * Absolute path to the MCP entrypoint. `LA_MCP_ENTRYPOINT` wins outright — it is
- * the escape hatch for layouts we cannot guess (a relocated install, a bundle).
- * Otherwise the first candidate that exists on disk wins; a path is never
- * invented, because the spec ends up in the user's agent config.
- */
-function mcpEntrypoint(): string {
-  const explicit = process.env.LA_MCP_ENTRYPOINT;
-  if (explicit !== undefined && explicit !== "") return resolve(explicit);
-
-  const from = moduleDir();
-  const candidates = entrypointCandidates(from);
-  const found = candidates.find((candidate) => existsSync(candidate));
-  if (found !== undefined) return found;
-
-  throw new Error(
-    `Could not locate the MCP server entrypoint (packages/mcp/src/index.ts). ` +
-      `Searched from ${from ?? "an unknown module directory"} and ${process.cwd()}. ` +
-      `Set LA_MCP_ENTRYPOINT to its absolute path.`,
-  );
-}
-
-export function mcpServerSpec(): { command: string; args: string[]; env: Record<string, string> } {
-  return {
-    command: "bun",
-    args: [mcpEntrypoint()],
-    env: { LA_DASHBOARD_PORT: String(process.env.LA_DASHBOARD_PORT ?? 7788) },
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Snippets (also the copy-paste fallback shown in the UI)
-// ---------------------------------------------------------------------------
+// --- Codex (~/.codex/config.toml) -------------------------------------------
 
 function tomlString(value: string): string {
-  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  return JSON.stringify(value);
 }
 
-export function claudeSnippet(): string {
-  return `${JSON.stringify({ mcpServers: { [MCP_SERVER_KEY]: mcpServerSpec() } }, null, 2)}\n`;
-}
-
-export function codexSnippet(): string {
-  const spec = mcpServerSpec();
-  const env = Object.entries(spec.env)
-    .map(([key, value]) => `${key} = ${tomlString(value)}`)
-    .join(", ");
-  return [
-    `[${MCP_CODEX_TABLE}]`,
+/** The TOML block for our server, ready to hand to upsertCodexToml. */
+export function codexSnippet(spec: McpServerSpec): string {
+  const lines = [
+    `[mcp_servers.${MCP_SERVER_NAME}]`,
     `command = ${tomlString(spec.command)}`,
     `args = [${spec.args.map(tomlString).join(", ")}]`,
-    // Inline table: keeps our whole entry in one flat table, which makes the
-    // section surgery below unambiguous.
-    `env = { ${env} }`,
-  ].join("\n");
-}
-
-// ---------------------------------------------------------------------------
-// Pure config transforms
-// ---------------------------------------------------------------------------
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/** Anything unparseable is treated as an empty config rather than an error: we back it up first. */
-function parseJsonObject(existing: string): Record<string, unknown> {
-  try {
-    const parsed: unknown = JSON.parse(existing);
-    return isRecord(parsed) ? parsed : {};
-  } catch {
-    return {};
+  ];
+  if (spec.env && Object.keys(spec.env).length > 0) {
+    const pairs = Object.entries(spec.env).map(([k, v]) => `${k} = ${tomlString(v)}`);
+    lines.push(`env = { ${pairs.join(", ")} }`);
   }
+  return `${lines.join("\n")}\n`;
 }
 
-export function upsertClaudeJson(existing: string): string {
-  const root = parseJsonObject(existing);
-  const servers = isRecord(root.mcpServers) ? root.mcpServers : {};
-  root.mcpServers = { ...servers, [MCP_SERVER_KEY]: mcpServerSpec() };
-  return `${JSON.stringify(root, null, 2)}\n`;
-}
-
-/** `[ a . "b" ]` -> "a.b"; null when the line is not a plain table header. */
-function tableKey(line: string): string | null {
-  const match = /^\s*\[([^[\]]+)\]\s*$/.exec(line);
-  const raw = match?.[1];
-  if (raw === undefined) return null;
-  return raw
-    .split(".")
-    .map((part) => part.trim().replace(/^["']|["']$/g, ""))
-    .join(".");
-}
-
-function isTableHeader(line: string): boolean {
-  return /^\s*\[/.test(line);
-}
+const CODEX_HEADER = `[mcp_servers.${MCP_SERVER_NAME}]`;
 
 /**
- * Replaces the snippet's table in place (including its sub-tables) or appends it
- * after a blank line. Every other line — comments, spacing, other tables — is untouched.
+ * Pure: replace our table in the TOML, or append it. Deliberately string-based —
+ * a real TOML round-trip would reformat and reorder the user's whole file.
  */
-export function upsertCodexToml(existing: string, snippet: string): string {
-  const snippetLines = snippet.replace(/\s+$/, "").split("\n");
-  const key = snippetLines.map(tableKey).find((k) => k !== null) ?? MCP_CODEX_TABLE;
-
-  const lines = existing.split("\n");
-  const start = lines.findIndex((line) => tableKey(line) === key);
+export function upsertCodexToml(existing: string | null, snippet: string): string {
+  const body = existing ?? "";
+  const lines = body.split("\n");
+  const start = lines.findIndex((l) => l.trim() === CODEX_HEADER);
 
   if (start === -1) {
-    // Trailing whitespace is normalised so appending twice cannot drift.
-    const base = existing.replace(/\s+$/, "");
-    const block = `${snippetLines.join("\n")}\n`;
-    return base === "" ? block : `${base}\n\n${block}`;
+    if (body.trim() === "") return snippet;
+    const separator = body.endsWith("\n") ? "\n" : "\n\n";
+    return body + separator + snippet;
   }
 
-  // The table ends at the next header that is neither itself nor one of its sub-tables.
   let end = lines.length;
   for (let i = start + 1; i < lines.length; i++) {
-    const line = lines[i] ?? "";
-    if (!isTableHeader(line)) continue;
-    const other = tableKey(line);
-    if (other !== null && (other === key || other.startsWith(`${key}.`))) continue;
-    end = i;
-    break;
+    if (/^\s*\[/.test(lines[i] ?? "")) {
+      end = i;
+      break;
+    }
   }
-
-  // Keep the blank lines that separated this table from the next one.
-  let bodyEnd = end;
-  while (bodyEnd > start + 1 && (lines[bodyEnd - 1] ?? "").trim() === "") bodyEnd--;
-  const spacing = lines.slice(bodyEnd, end);
-
-  return [...lines.slice(0, start), ...snippetLines, ...spacing, ...lines.slice(end)].join("\n");
+  const before = lines.slice(0, start).join("\n");
+  const after = lines.slice(end).join("\n");
+  const head = before === "" ? "" : `${before}\n`;
+  return head + snippet + (after.trim() === "" ? "" : `\n${after}`);
 }
 
-// ---------------------------------------------------------------------------
-// Detection + install
-// ---------------------------------------------------------------------------
+// --- install ----------------------------------------------------------------
 
-function configPathFor(client: McpClientId): string {
+export function clientConfigPath(client: McpClientId): string {
   return client === "claude" ? claudeConfigPath() : codexConfigPath();
 }
 
-async function readIfExists(path: string): Promise<string | null> {
-  const file = Bun.file(path);
-  if (!(await file.exists())) return null;
-  return file.text();
+export function isConfigured(client: McpClientId, contents: string | null): boolean {
+  if (contents === null) return false;
+  if (client === "codex") return contents.includes(CODEX_HEADER);
+  try {
+    const parsed = JSON.parse(contents) as { mcpServers?: Record<string, unknown> };
+    return Boolean(parsed?.mcpServers && MCP_SERVER_NAME in parsed.mcpServers);
+  } catch {
+    return false;
+  }
 }
 
-export async function detectClients(): Promise<{ claude: McpClientState; codex: McpClientState }> {
-  const claudePath = claudeConfigPath();
-  const codexPath = codexConfigPath();
-  const [claudeText, codexText] = await Promise.all([
-    readIfExists(claudePath),
-    readIfExists(codexPath),
-  ]);
-
-  const claudeServers = claudeText === null ? {} : parseJsonObject(claudeText).mcpServers;
-  const claude: McpClientState = {
-    configPath: claudePath,
-    clientDetected: claudeText !== null,
-    installed: isRecord(claudeServers) && MCP_SERVER_KEY in claudeServers,
-  };
-
-  const codex: McpClientState = {
-    configPath: codexPath,
-    clientDetected: codexText !== null,
-    installed:
-      codexText !== null && codexText.split("\n").some((line) => tableKey(line) === MCP_CODEX_TABLE),
-  };
-
-  return { claude, codex };
+export async function detectClients(): Promise<McpClient[]> {
+  const definitions: Array<{ id: McpClientId; name: string }> = [
+    { id: "claude", name: "Claude Code" },
+    { id: "codex", name: "Codex" },
+  ];
+  return Promise.all(
+    definitions.map(async ({ id, name }) => {
+      const path = clientConfigPath(id);
+      const contents = await readFileOrNull(path);
+      return {
+        id,
+        name,
+        configPath: path,
+        installed: contents !== null,
+        configured: isConfigured(id, contents),
+      };
+    }),
+  );
 }
 
-/** `<path>.bak-1`, `.bak-2`, … — never clobbers an earlier backup. */
-async function backup(path: string, content: string): Promise<string> {
-  let n = 1;
-  while (existsSync(`${path}.bak-${n}`)) n++;
-  const backupPath = `${path}.bak-${n}`;
-  await Bun.write(backupPath, content);
-  return backupPath;
+export interface InstallResult {
+  client: McpClientId;
+  configPath: string;
+  /** Path of the backup taken first, or null when there was no file to back up. */
+  backupPath: string | null;
 }
 
-async function writeAtomic(path: string, content: string): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  // Same-directory rename: the client never sees a half-written config.
-  const tmp = `${path}.tmp-${process.pid}-${Date.now()}`;
-  await Bun.write(tmp, content);
-  await rename(tmp, path);
-}
-
-export async function installMcp(
-  client: McpClientId,
-): Promise<{ ok: true; configPath: string; backupPath: string | null; snippet: string }> {
-  const configPath = configPathFor(client);
-  const existing = await readIfExists(configPath);
-  const snippet = client === "claude" ? claudeSnippet() : codexSnippet();
+/** Back up, then atomically rewrite the client's config with our server registered. */
+export async function installMcp(client: McpClientId, dashboardPort?: number): Promise<InstallResult> {
+  const path = clientConfigPath(client);
+  const existing = await readFileOrNull(path);
+  const spec = mcpServerSpec(dashboardPort);
   const next =
-    client === "claude" ? upsertClaudeJson(existing ?? "") : upsertCodexToml(existing ?? "", snippet);
+    client === "claude" ? upsertClaudeJson(existing, spec) : upsertCodexToml(existing, codexSnippet(spec));
 
-  const backupPath = existing === null ? null : await backup(configPath, existing);
-  await writeAtomic(configPath, next);
-
-  return { ok: true, configPath, backupPath, snippet };
+  const backupPath = await backupFile(path);
+  await writeFileAtomic(path, next);
+  return { client, configPath: path, backupPath };
 }

@@ -1,377 +1,286 @@
-import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { configDir, configPath } from "../src/paths.ts";
-import { DEFAULT_CONFIG, ValidationError, type Config } from "../src/types.ts";
+import { configPath } from "../src/paths.ts";
 import {
   createAlias,
   deleteAlias,
   getAlias,
+  getAliasByName,
   listAliases,
   loadConfig,
-  saveConfig,
   updateAlias,
   updateSettings,
-  withConfigLock,
 } from "../src/store.ts";
+import { DEFAULT_CONFIG, RESERVED_ALIAS_NAME, ValidationError, type Config } from "../src/types.ts";
 
-const ORIGINAL_CONFIG_DIR = process.env.LA_CONFIG_DIR;
-const roots: string[] = [];
+let dir: string;
+const previous = process.env.LA_CONFIG_DIR;
 
 beforeEach(async () => {
-  const root = await mkdtemp(join(tmpdir(), "la-store-"));
-  roots.push(root);
-  process.env.LA_CONFIG_DIR = root;
-  // Guard: no test may ever be allowed to touch the real ~/.config.
-  expect(configDir()).toBe(root);
+  dir = await mkdtemp(join(tmpdir(), "la-store-"));
+  process.env.LA_CONFIG_DIR = dir;
 });
 
 afterEach(() => {
-  process.env.LA_CONFIG_DIR = ORIGINAL_CONFIG_DIR;
+  if (previous === undefined) delete process.env.LA_CONFIG_DIR;
+  else process.env.LA_CONFIG_DIR = previous;
 });
 
-afterAll(async () => {
-  if (ORIGINAL_CONFIG_DIR === undefined) delete process.env.LA_CONFIG_DIR;
-  await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
-});
-
-async function readRawConfig(): Promise<unknown> {
-  return JSON.parse(await Bun.file(configPath()).text());
+async function raw(): Promise<Config> {
+  return JSON.parse(await readFile(configPath(), "utf8")) as Config;
 }
 
-describe("loadConfig", () => {
-  test("seeds defaults on first read and persists them", async () => {
+describe("seeding", () => {
+  test("creates the file with defaults and the reserved alias", async () => {
     const config = await loadConfig();
-    expect(config).toEqual({ ...DEFAULT_CONFIG, aliases: [] });
-    expect(await Bun.file(configPath()).exists()).toBe(true);
-    expect(await readRawConfig()).toEqual({ ...DEFAULT_CONFIG, aliases: [] });
+    expect(config.version).toBe(2);
+    expect(config.tld).toBe(DEFAULT_CONFIG.tld);
+    expect(config.dashboardPort).toBe(DEFAULT_CONFIG.dashboardPort);
+    expect(config.https).toBe(DEFAULT_CONFIG.https);
+    expect(config.aliases).toHaveLength(1);
+
+    const index = config.aliases[0]!;
+    expect(index.name).toBe(RESERVED_ALIAS_NAME);
+    expect(index.reserved).toBe(true);
+    expect(index.enabled).toBe(true);
+    expect(index.ip).toBe("127.0.0.2");
+    expect(index.port).toBe(DEFAULT_CONFIG.dashboardPort);
+    expect(await raw()).toEqual(config);
   });
 
-  test("is stable across reads", async () => {
+  test("is stable across loads", async () => {
     const first = await loadConfig();
     const second = await loadConfig();
     expect(second).toEqual(first);
   });
 
-  test("fills in missing fields with defaults", async () => {
-    await Bun.write(configPath(), JSON.stringify({ version: 1, tld: "test" }));
+  test("re-adds the reserved alias if it goes missing", async () => {
+    await writeFile(configPath(), JSON.stringify({ ...DEFAULT_CONFIG, aliases: [] }));
     const config = await loadConfig();
-    expect(config.tld).toBe("test");
-    expect(config.httpPort).toBe(DEFAULT_CONFIG.httpPort);
-    expect(config.dashboardPort).toBe(DEFAULT_CONFIG.dashboardPort);
-    expect(config.aliases).toEqual([]);
+    expect(config.aliases.filter((a) => a.reserved)).toHaveLength(1);
   });
 
-  test("replaces nonsensical scalar values with defaults", async () => {
-    await Bun.write(
-      configPath(),
-      JSON.stringify({ tld: "-nope-", httpPort: "eighty", https: "yes", dashboardPort: 0 }),
-    );
-    const config = await loadConfig();
-    expect(config.tld).toBe(DEFAULT_CONFIG.tld);
-    expect(config.httpPort).toBe(DEFAULT_CONFIG.httpPort);
-    expect(config.https).toBe(DEFAULT_CONFIG.https);
-    expect(config.dashboardPort).toBe(DEFAULT_CONFIG.dashboardPort);
-  });
-
-  test("keeps sane aliases and drops broken ones", async () => {
-    await Bun.write(
+  test("keeps the reserved alias on the first address when others exist", async () => {
+    await writeFile(
       configPath(),
       JSON.stringify({
-        version: 1,
-        aliases: [
-          { id: "a", name: "Good", port: 3000 },
-          { id: "b", name: "no-port" },
-          { id: "c", name: "bad name!", port: 3001 },
-          { id: "d", name: "over", port: 70000 },
-          "not-an-object",
-          null,
-          { id: "e", name: "dupe", port: 3002 },
-          { id: "f", name: "DUPE", port: 3003 },
-        ],
+        ...DEFAULT_CONFIG,
+        aliases: [{ id: "x", name: "myapp", port: 3000, ip: "127.0.0.2" }],
       }),
     );
     const config = await loadConfig();
-    expect(config.aliases.map((a) => a.name)).toEqual(["good", "dupe"]);
-    const first = config.aliases[0]!;
-    expect(first.target).toBe("127.0.0.1");
-    expect(first.enabled).toBe(true);
-    expect(first.projectPath).toBeNull();
-    expect(first.description).toBeNull();
-    expect(Number.isNaN(Date.parse(first.createdAt))).toBe(false);
-  });
-
-  test("generates an id for an alias that lost one", async () => {
-    await Bun.write(
-      configPath(),
-      JSON.stringify({ version: 1, aliases: [{ name: "myapp", port: 3000 }] }),
-    );
-    const config = await loadConfig();
-    expect(config.aliases[0]!.id.length).toBeGreaterThan(0);
-  });
-
-  test("backs up unparseable JSON and starts fresh", async () => {
-    await Bun.write(configPath(), "{ this is not json");
-    const config = await loadConfig();
-    expect(config).toEqual({ ...DEFAULT_CONFIG, aliases: [] });
-    expect(await Bun.file(`${configPath()}.bak`).text()).toBe("{ this is not json");
-  });
-
-  test.each([
-    ["an array root", "[1, 2, 3]"],
-    ["a scalar root", '"nope"'],
-    ["a non-array aliases field", '{"version":1,"aliases":{"a":1}}'],
-  ])("backs up %s and starts fresh", async (_label, content) => {
-    await Bun.write(configPath(), content);
-    const config = await loadConfig();
-    expect(config).toEqual({ ...DEFAULT_CONFIG, aliases: [] });
-    expect(await Bun.file(`${configPath()}.bak`).text()).toBe(content);
-    expect(await readRawConfig()).toEqual({ ...DEFAULT_CONFIG, aliases: [] });
+    const index = config.aliases.find((a) => a.reserved)!;
+    expect(index.ip).toBe("127.0.0.3");
+    expect(config.aliases.find((a) => a.name === "myapp")!.ip).toBe("127.0.0.2");
   });
 });
 
-describe("saveConfig", () => {
-  test("round-trips and leaves no temp files behind", async () => {
-    const config: Config = { ...DEFAULT_CONFIG, tld: "test", aliases: [] };
-    expect(await saveConfig(config)).toEqual(config);
-    expect(await readRawConfig()).toEqual(config);
-    const entries = await readdir(configDir());
-    expect(entries.filter((name) => name.endsWith(".tmp"))).toEqual([]);
-    expect(entries).toEqual(["config.json"]);
+describe("corrupt config", () => {
+  test("is backed up rather than crashing", async () => {
+    await writeFile(configPath(), "{not json at all");
+    const config = await loadConfig();
+    expect(config.aliases).toHaveLength(1);
+
+    const backups = (await readdir(dir)).filter((f) => f.includes("corrupt"));
+    expect(backups).toHaveLength(1);
+    expect(await readFile(join(dir, backups[0]!), "utf8")).toBe("{not json at all");
   });
 
-  test("creates the config directory when it does not exist", async () => {
-    const nested = join(process.env.LA_CONFIG_DIR!, "deep", "deeper");
-    process.env.LA_CONFIG_DIR = nested;
-    await saveConfig({ ...DEFAULT_CONFIG, aliases: [] });
-    expect(await Bun.file(configPath()).exists()).toBe(true);
+  test("junk aliases are dropped and the file repaired", async () => {
+    await writeFile(
+      configPath(),
+      JSON.stringify({
+        version: 1,
+        tld: "NOPE!",
+        dashboardPort: 0,
+        aliases: [null, { name: "ok", port: 3000 }, { name: "noport" }, { name: "ok", port: 4000 }],
+      }),
+    );
+    const config = await loadConfig();
+    expect(config.tld).toBe("local");
+    expect(config.dashboardPort).toBe(7788);
+    expect(config.aliases.map((a) => a.name).sort()).toEqual(["index", "ok"]);
+    // repaired on disk, not just in memory
+    expect(await raw()).toEqual(config);
   });
 });
 
 describe("createAlias", () => {
-  test("normalizes, defaults and persists", async () => {
-    const { config, alias } = await createAlias({ name: "  MyApp  ", port: 3000 });
-    expect(alias.name).toBe("myapp");
-    expect(alias.target).toBe("127.0.0.1");
+  test("allocates the next free IP and sensible defaults", async () => {
+    const alias = await createAlias({ name: "myapp", port: 3000 });
+    expect(alias.ip).toBe("127.0.0.3");
+    expect(alias.reserved).toBe(false);
     expect(alias.enabled).toBe(true);
     expect(alias.projectPath).toBeNull();
     expect(alias.description).toBeNull();
     expect(alias.id).toMatch(/^[0-9a-f-]{36}$/);
     expect(alias.createdAt).toBe(alias.updatedAt);
-    expect(config.aliases).toEqual([alias]);
-    expect((await readRawConfig() as Config).aliases).toEqual([alias]);
   });
 
-  test("keeps the optional fields it is given", async () => {
-    const { alias } = await createAlias({
-      name: "api",
-      port: 8080,
-      target: "::1",
-      projectPath: "/Users/me/proj",
-      description: "API server",
-      enabled: false,
-    });
-    expect(alias).toMatchObject({
-      name: "api",
-      port: 8080,
-      target: "::1",
-      projectPath: "/Users/me/proj",
-      description: "API server",
-      enabled: false,
-    });
+  test("normalizes the name", async () => {
+    const alias = await createAlias({ name: "  MyApp  ", port: 3000 });
+    expect(alias.name).toBe("myapp");
   });
 
-  test("generates unique ids", async () => {
-    const a = await createAlias({ name: "one", port: 3001 });
-    const b = await createAlias({ name: "two", port: 3002 });
-    expect(a.alias.id).not.toBe(b.alias.id);
-  });
-
-  test.each([
-    ["duplicate name", { name: "myapp", port: 4000 }],
-    ["duplicate name in another case", { name: "MYAPP", port: 4000 }],
-    ["reserved name", { name: "localhost", port: 4000 }],
-    ["invalid name", { name: "my_app", port: 4000 }],
-    ["port too low", { name: "other", port: 0 }],
-    ["port too high", { name: "other", port: 65536 }],
-    ["remote target", { name: "other", port: 4000, target: "example.com" }],
-  ])("rejects %s without writing", async (_label, input) => {
+  test("rejects duplicates case-insensitively", async () => {
     await createAlias({ name: "myapp", port: 3000 });
-    const before = await Bun.file(configPath()).text();
-    await expect(createAlias(input)).rejects.toThrow(ValidationError);
-    expect(await Bun.file(configPath()).text()).toBe(before);
+    await expect(createAlias({ name: "MYAPP", port: 3001 })).rejects.toThrow(ValidationError);
+  });
+
+  test("rejects the reserved index name", async () => {
+    await expect(createAlias({ name: "index", port: 3000 })).rejects.toThrow(/reserved for the dashboard/);
+  });
+
+  test("rejects a bad port without writing anything", async () => {
+    await loadConfig();
+    const before = await raw();
+    await expect(createAlias({ name: "myapp", port: 0 })).rejects.toThrow(ValidationError);
+    expect(await raw()).toEqual(before);
+  });
+
+  test("reuses freed addresses so allocation stays dense", async () => {
+    const a = await createAlias({ name: "a", port: 3000 });
+    const b = await createAlias({ name: "b", port: 3001 });
+    expect([a.ip, b.ip]).toEqual(["127.0.0.3", "127.0.0.4"]);
+    await deleteAlias(a.id);
+    const c = await createAlias({ name: "c", port: 3002 });
+    expect(c.ip).toBe("127.0.0.3");
+  });
+
+  test("concurrent creates all land (mutex)", async () => {
+    const names = Array.from({ length: 20 }, (_, i) => `app${i}`);
+    await Promise.all(names.map((name, i) => createAlias({ name, port: 3000 + i })));
+    const aliases = await listAliases();
+    expect(aliases).toHaveLength(21);
+    expect(new Set(aliases.map((a) => a.ip)).size).toBe(21);
+    expect(new Set(aliases.map((a) => a.name)).size).toBe(21);
   });
 });
 
-describe("getAlias / listAliases", () => {
-  test("finds by id and by bare name, case-insensitively", async () => {
-    const { alias } = await createAlias({ name: "myapp", port: 3000 });
-    expect((await getAlias(alias.id))?.id).toBe(alias.id);
-    expect((await getAlias("myapp"))?.id).toBe(alias.id);
-    expect((await getAlias("MyApp"))?.id).toBe(alias.id);
+describe("read helpers", () => {
+  test("getAlias by id, getAliasByName, and misses", async () => {
+    const alias = await createAlias({ name: "myapp", port: 3000 });
+    expect((await getAlias(alias.id))!.name).toBe("myapp");
+    expect((await getAliasByName("MyApp"))!.id).toBe(alias.id);
     expect(await getAlias("nope")).toBeNull();
-    expect(await getAlias("")).toBeNull();
-  });
-
-  test("listAliases returns everything in insertion order", async () => {
-    await createAlias({ name: "one", port: 3001 });
-    await createAlias({ name: "two", port: 3002 });
-    expect((await listAliases()).map((a) => a.name)).toEqual(["one", "two"]);
+    expect(await getAliasByName("nope")).toBeNull();
   });
 });
 
 describe("updateAlias", () => {
-  test("patches only the given fields and bumps updatedAt", async () => {
-    const { alias } = await createAlias({ name: "myapp", port: 3000, description: "keep" });
+  test("changes only what was passed and bumps updatedAt", async () => {
+    const alias = await createAlias({ name: "myapp", port: 3000 });
     await Bun.sleep(2);
-    const { alias: updated } = await updateAlias(alias.id, { port: 4000 });
+    const updated = await updateAlias(alias.id, { port: 4000 });
     expect(updated.port).toBe(4000);
     expect(updated.name).toBe("myapp");
-    expect(updated.description).toBe("keep");
+    expect(updated.ip).toBe(alias.ip);
     expect(updated.createdAt).toBe(alias.createdAt);
-    expect(updated.updatedAt).not.toBe(alias.updatedAt);
+    expect(Date.parse(updated.updatedAt)).toBeGreaterThan(Date.parse(alias.updatedAt));
   });
 
-  test("can clear nullable fields explicitly", async () => {
-    const { alias } = await createAlias({
-      name: "myapp",
-      port: 3000,
-      description: "gone",
-      projectPath: "/tmp/x",
-    });
-    const { alias: updated } = await updateAlias(alias.id, {
-      description: null,
-      projectPath: null,
-    });
-    expect(updated.description).toBeNull();
-    expect(updated.projectPath).toBeNull();
+  test("an alias keeps its IP for life", async () => {
+    const alias = await createAlias({ name: "myapp", port: 3000 });
+    const renamed = await updateAlias(alias.id, { name: "other", port: 5000, enabled: false });
+    expect(renamed.ip).toBe(alias.ip);
   });
 
-  test("allows keeping its own name", async () => {
-    const { alias } = await createAlias({ name: "myapp", port: 3000 });
-    const { alias: updated } = await updateAlias(alias.id, { name: "MyApp", port: 3001 });
-    expect(updated.name).toBe("myapp");
+  test("accepts its own name", async () => {
+    const alias = await createAlias({ name: "myapp", port: 3000 });
+    expect((await updateAlias(alias.id, { name: "myapp" })).name).toBe("myapp");
   });
 
   test("rejects a name taken by another alias", async () => {
     await createAlias({ name: "taken", port: 3000 });
-    const { alias } = await createAlias({ name: "myapp", port: 3001 });
-    await expect(updateAlias(alias.id, { name: "TAKEN" })).rejects.toThrow(ValidationError);
+    const alias = await createAlias({ name: "myapp", port: 3001 });
+    await expect(updateAlias(alias.id, { name: "taken" })).rejects.toThrow(/already exists/);
   });
 
-  test("rejects an unknown id", async () => {
-    await expect(updateAlias("missing", { port: 3000 })).rejects.toThrow(/not found/i);
+  test("clears optional fields with null", async () => {
+    const alias = await createAlias({ name: "myapp", port: 3000, projectPath: "/tmp/x", description: "d" });
+    const cleared = await updateAlias(alias.id, { projectPath: null, description: null });
+    expect(cleared.projectPath).toBeNull();
+    expect(cleared.description).toBeNull();
   });
 
-  test("persists the change", async () => {
-    const { alias } = await createAlias({ name: "myapp", port: 3000 });
-    await updateAlias(alias.id, { enabled: false });
-    expect((await getAlias(alias.id))?.enabled).toBe(false);
+  test("unknown id throws", async () => {
+    await expect(updateAlias("nope", { port: 1 })).rejects.toThrow(ValidationError);
+  });
+
+  test("the reserved alias cannot be renamed or disabled", async () => {
+    const index = (await listAliases()).find((a) => a.reserved)!;
+    await expect(updateAlias(index.id, { name: "dashboard" })).rejects.toThrow(/cannot be renamed/);
+    await expect(updateAlias(index.id, { enabled: false })).rejects.toThrow(/cannot be disabled/);
+  });
+
+  test("the reserved alias's port always mirrors dashboardPort", async () => {
+    const index = (await listAliases()).find((a) => a.reserved)!;
+    expect((await updateAlias(index.id, { port: 1234 })).port).toBe(7788);
+    expect((await updateAlias(index.id, { description: "hi" })).description).toBe("hi");
   });
 });
 
 describe("deleteAlias", () => {
-  test("removes the alias and returns it", async () => {
-    const { alias } = await createAlias({ name: "myapp", port: 3000 });
-    await createAlias({ name: "other", port: 3001 });
-    const { config, alias: deleted } = await deleteAlias(alias.id);
-    expect(deleted.id).toBe(alias.id);
-    expect(config.aliases.map((a) => a.name)).toEqual(["other"]);
+  test("removes the alias", async () => {
+    const alias = await createAlias({ name: "myapp", port: 3000 });
+    await deleteAlias(alias.id);
     expect(await getAlias(alias.id)).toBeNull();
+    expect(await listAliases()).toHaveLength(1);
   });
 
-  test("rejects an unknown id", async () => {
-    await expect(deleteAlias("missing")).rejects.toThrow(/not found/i);
+  test("refuses to delete the reserved alias", async () => {
+    const index = (await listAliases()).find((a) => a.reserved)!;
+    await expect(deleteAlias(index.id)).rejects.toThrow(/cannot be deleted/);
+    expect(await getAlias(index.id)).not.toBeNull();
+  });
+
+  test("unknown id throws", async () => {
+    await expect(deleteAlias("nope")).rejects.toThrow(ValidationError);
   });
 });
 
 describe("updateSettings", () => {
-  test("patches settings and leaves aliases alone", async () => {
-    await createAlias({ name: "myapp", port: 3000 });
-    const config = await updateSettings({ tld: "TEST.", https: true, httpsPort: 8443 });
+  test("updates tld, port and https, normalizing the tld", async () => {
+    const config = await updateSettings({ tld: " TEST ", dashboardPort: 9999, https: true });
     expect(config.tld).toBe("test");
+    expect(config.dashboardPort).toBe(9999);
     expect(config.https).toBe(true);
-    expect(config.httpsPort).toBe(8443);
-    expect(config.httpPort).toBe(DEFAULT_CONFIG.httpPort);
-    expect(config.aliases.length).toBe(1);
   });
 
-  test("ignores fields that are not provided", async () => {
-    await updateSettings({ tld: "test" });
-    const config = await updateSettings({ dashboardPort: 9000 });
-    expect(config.tld).toBe("test");
-    expect(config.dashboardPort).toBe(9000);
+  test("moves the reserved alias's port with dashboardPort", async () => {
+    await updateSettings({ dashboardPort: 9100 });
+    expect((await listAliases()).find((a) => a.reserved)!.port).toBe(9100);
   });
 
-  test("reports a bad port on its own field", async () => {
-    try {
-      await updateSettings({ httpPort: 0 });
-      throw new Error("expected a ValidationError");
-    } catch (error) {
-      expect(error).toBeInstanceOf(ValidationError);
-      expect((error as ValidationError).issues[0]!.field).toBe("httpPort");
-    }
+  test("rejects bad values and leaves the file alone", async () => {
+    await loadConfig();
+    const before = await raw();
+    await expect(updateSettings({ tld: "not valid" })).rejects.toThrow(ValidationError);
+    await expect(updateSettings({ dashboardPort: 0 })).rejects.toThrow(ValidationError);
+    expect(await raw()).toEqual(before);
   });
 
-  test("rejects an invalid tld without writing", async () => {
+  test("an empty patch changes nothing", async () => {
     const before = await loadConfig();
-    await expect(updateSettings({ tld: "-nope-" })).rejects.toThrow(ValidationError);
-    expect(await loadConfig()).toEqual(before);
+    const after = await updateSettings({});
+    expect(after).toEqual(before);
   });
 });
 
-describe("withConfigLock", () => {
-  test("serializes overlapping tasks", async () => {
-    const events: string[] = [];
-    const task = (id: string) =>
-      withConfigLock(async () => {
-        events.push(`${id}:start`);
-        await Bun.sleep(5);
-        events.push(`${id}:end`);
-      });
-    await Promise.all([task("a"), task("b"), task("c")]);
-    expect(events).toEqual([
-      "a:start",
-      "a:end",
-      "b:start",
-      "b:end",
-      "c:start",
-      "c:end",
-    ]);
+describe("atomic writes", () => {
+  test("no temp files are left behind", async () => {
+    await createAlias({ name: "myapp", port: 3000 });
+    await updateSettings({ https: true });
+    expect((await readdir(dir)).filter((f) => f.endsWith(".tmp"))).toEqual([]);
+    expect(await readdir(dir)).toEqual(["config.json"]);
   });
 
-  test("a failing task does not wedge the queue", async () => {
-    await expect(
-      withConfigLock(async () => {
-        throw new Error("boom");
-      }),
-    ).rejects.toThrow("boom");
-    expect(await withConfigLock(async () => "next")).toBe("next");
-  });
-
-  test("concurrent createAlias calls never lose a write", async () => {
-    const names = Array.from({ length: 25 }, (_, i) => `app-${i}`);
-    await Promise.all(names.map((name, i) => createAlias({ name, port: 3000 + i })));
-    const aliases = await listAliases();
-    expect(aliases.length).toBe(25);
-    expect(new Set(aliases.map((a) => a.name)).size).toBe(25);
-    expect((await readRawConfig() as Config).aliases.length).toBe(25);
-  });
-
-  test("concurrent createAlias with the same name lets exactly one win", async () => {
-    const results = await Promise.allSettled(
-      Array.from({ length: 8 }, () => createAlias({ name: "clash", port: 3000 })),
-    );
-    expect(results.filter((r) => r.status === "fulfilled").length).toBe(1);
-    expect((await listAliases()).length).toBe(1);
-  });
-
-  test("concurrent deletes leave the config consistent", async () => {
-    const created = await Promise.all(
-      Array.from({ length: 6 }, (_, i) => createAlias({ name: `app-${i}`, port: 3000 + i })),
-    );
-    await Promise.all(created.slice(0, 3).map(({ alias }) => deleteAlias(alias.id)));
-    expect((await listAliases()).map((a) => a.name)).toEqual(["app-3", "app-4", "app-5"]);
+  test("the file is pretty-printed JSON with a trailing newline", async () => {
+    await loadConfig();
+    const text = await readFile(configPath(), "utf8");
+    expect(text.endsWith("\n")).toBe(true);
+    expect(text).toContain('\n  "version": 2');
   });
 });

@@ -1,9 +1,0 @@
-{
-  "name": "@localhost-aliases/helper",
-  "version": "0.1.0",
-  "private": true,
-  "type": "module",
-  "main": "./src/index.ts",
-  "scripts": { "start": "bun run src/index.ts", "test": "bun test" },
-  "dependencies": { "@localhost-aliases/core": "workspace:*" }
-}

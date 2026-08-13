@@ -1,0 +1,6 @@
+{
+  "name": "@localhost-aliases/forwarder", "version": "2.0.0", "private": true, "type": "module",
+  "main": "./src/index.ts",
+  "scripts": { "test": "bun test", "compile": "bun build --compile src/index.ts --outfile ../../dist/forwarder" },
+  "dependencies": { "@localhost-aliases/core": "workspace:*" }
+}

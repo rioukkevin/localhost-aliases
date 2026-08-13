@@ -1,0 +1,17 @@
+{
+  "name": "@localhost-aliases/dashboard", "version": "2.0.0", "private": true, "type": "module",
+  "scripts": {
+    "dev": "bun --bun next dev -H 127.0.0.1 -p ${LA_DASHBOARD_PORT:-7788}",
+    "build": "node -e \"const{spawnSync}=require('node:child_process');const bin=require.resolve('next/dist/bin/next');process.exit(spawnSync(process.execPath,[bin,'build'],{stdio:'inherit'}).status??1)\"",
+    "start": "bun --bun next start -H 127.0.0.1 -p ${LA_DASHBOARD_PORT:-7788}",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@localhost-aliases/core": "workspace:*",
+    "next": "^15.1.0", "react": "^19.0.0", "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0", "@types/react-dom": "^19.0.0",
+    "tailwindcss": "^4.0.0", "@tailwindcss/postcss": "^4.0.0"
+  }
+}

@@ -1,190 +1,124 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { describe, expect, test } from "bun:test";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { mergeWorkspace, readWorkspace, workspacePath, writeWorkspace } from "../src/workspace.ts";
 import { WORKSPACE_FILENAME } from "../src/types.ts";
-import {
-  WORKSPACE_SCHEMA_URL,
-  mergeWorkspaceAliases,
-  readWorkspace,
-  workspacePath,
-  writeWorkspace,
-} from "../src/workspace.ts";
 
-const dirs: string[] = [];
-
-function tempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), "la-workspace-"));
-  dirs.push(dir);
+async function project(contents?: string): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "la-ws-"));
+  if (contents !== undefined) await writeFile(join(dir, WORKSPACE_FILENAME), contents);
   return dir;
 }
 
-afterEach(() => {
-  while (dirs.length > 0) rmSync(dirs.pop()!, { recursive: true, force: true });
-});
-
-describe("workspacePath", () => {
-  test("joins the fixed filename onto the project dir", () => {
-    expect(workspacePath("/projects/app")).toBe(`/projects/app/${WORKSPACE_FILENAME}`);
-  });
-});
-
 describe("readWorkspace", () => {
-  test("returns null when the file is absent (the file is optional)", async () => {
-    expect(await readWorkspace(tempDir())).toBeNull();
+  test("absent file is null, not an error", async () => {
+    expect(await readWorkspace(await project())).toBeNull();
   });
 
-  test("parses aliases", async () => {
-    const dir = tempDir();
-    await Bun.write(workspacePath(dir), '{ "aliases": [{ "name": "api", "port": 3000 }] }');
-    expect(await readWorkspace(dir)).toEqual({ aliases: [{ name: "api", port: 3000 }] });
+  test("reads aliases and keeps $schema", async () => {
+    const dir = await project(
+      JSON.stringify({ $schema: "./schema.json", aliases: [{ name: "Web", port: 3000, description: "d" }] }),
+    );
+    expect(await readWorkspace(dir)).toEqual({
+      $schema: "./schema.json",
+      aliases: [{ name: "web", port: 3000, description: "d" }],
+    });
   });
 
-  test("preserves unknown top-level keys", async () => {
-    const dir = tempDir();
-    await Bun.write(workspacePath(dir), '{ "team": "core", "aliases": [] }');
-    const file = await readWorkspace(dir);
-    expect((file as unknown as Record<string, unknown>).team).toBe("core");
+  test("omits description when absent", async () => {
+    const dir = await project(JSON.stringify({ aliases: [{ name: "web", port: 3000 }] }));
+    expect(await readWorkspace(dir)).toEqual({ aliases: [{ name: "web", port: 3000 }] });
   });
 
-  test("defaults a missing aliases key to an empty list", async () => {
-    const dir = tempDir();
-    await Bun.write(workspacePath(dir), '{ "note": "hi" }');
-    expect((await readWorkspace(dir))?.aliases).toEqual([]);
+  test.each([
+    ["broken JSON", "{nope"],
+    ["not an object", "[]"],
+    ["missing aliases", "{}"],
+    ["aliases not an array", '{"aliases":{}}'],
+    ["alias not an object", '{"aliases":["web"]}'],
+    ["invalid name", '{"aliases":[{"name":"-bad","port":3000}]}'],
+    ["invalid port", '{"aliases":[{"name":"web","port":0}]}'],
+  ])("throws on %s", async (_label, contents) => {
+    const dir = await project(contents);
+    await expect(readWorkspace(dir)).rejects.toThrow();
   });
 
-  test("throws a clear error on invalid JSON", async () => {
-    const dir = tempDir();
-    await Bun.write(workspacePath(dir), "{ nope");
-    expect(readWorkspace(dir)).rejects.toThrow(/is not valid JSON/);
-  });
-
-  test("throws when the file is empty", async () => {
-    const dir = tempDir();
-    await Bun.write(workspacePath(dir), "");
-    expect(readWorkspace(dir)).rejects.toThrow(/is not valid JSON/);
-  });
-
-  test("throws when the root is not an object", async () => {
-    const dir = tempDir();
-    await Bun.write(workspacePath(dir), "[1, 2]");
-    expect(readWorkspace(dir)).rejects.toThrow(/must contain a JSON object/);
-  });
-
-  test("throws when aliases is not an array", async () => {
-    const dir = tempDir();
-    await Bun.write(workspacePath(dir), '{ "aliases": { "api": 3000 } }');
-    expect(readWorkspace(dir)).rejects.toThrow(/"aliases" must be an array/);
+  test("the error names the file", async () => {
+    const dir = await project("{nope");
+    await expect(readWorkspace(dir)).rejects.toThrow(WORKSPACE_FILENAME);
   });
 });
 
 describe("writeWorkspace", () => {
-  test("pretty-prints with 2 spaces, a trailing newline and a $schema", async () => {
-    const dir = tempDir();
-    await writeWorkspace(dir, { aliases: [{ name: "api", port: 3000 }] });
-    const text = await Bun.file(workspacePath(dir)).text();
-    expect(text).toBe(
-      `{\n` +
-        `  "$schema": "${WORKSPACE_SCHEMA_URL}",\n` +
-        `  "aliases": [\n` +
-        `    {\n` +
-        `      "name": "api",\n` +
-        `      "port": 3000\n` +
-        `    }\n` +
-        `  ]\n` +
-        `}\n`,
-    );
-  });
-
-  test("keeps a $schema the user already set and any extra keys", async () => {
-    const dir = tempDir();
-    await writeWorkspace(dir, {
-      $schema: "./custom.json",
-      aliases: [],
-      team: "core",
-    } as never);
-    const raw = JSON.parse(await Bun.file(workspacePath(dir)).text());
-    expect(raw.$schema).toBe("./custom.json");
-    expect(raw.team).toBe("core");
-  });
-
-  test("creates the project dir when missing and round-trips", async () => {
-    const dir = join(tempDir(), "nested", "project");
-    await writeWorkspace(dir, { aliases: [{ name: "web", port: 5173 }] });
-    expect((await readWorkspace(dir))?.aliases).toEqual([{ name: "web", port: 5173 }]);
-  });
-});
-
-describe("mergeWorkspaceAliases", () => {
-  test("creates the file when absent", async () => {
-    const dir = tempDir();
-    const file = await mergeWorkspaceAliases(dir, [{ name: "api", port: 3000 }]);
-    expect(file.aliases).toEqual([{ name: "api", port: 3000 }]);
+  test("round-trips", async () => {
+    const dir = await project();
+    const file = { aliases: [{ name: "web", port: 3000 }] };
+    const path = await writeWorkspace(dir, file);
+    expect(path).toBe(workspacePath(dir));
     expect(await readWorkspace(dir)).toEqual(file);
   });
 
-  test("last write wins on port and description", async () => {
-    const dir = tempDir();
-    await mergeWorkspaceAliases(dir, [{ name: "api", port: 3000, description: "old" }]);
-    const file = await mergeWorkspaceAliases(dir, [{ name: "api", port: 4000, description: "new" }]);
-    expect(file.aliases).toEqual([{ name: "api", port: 4000, description: "new" }]);
+  test("writes pretty JSON with a trailing newline", async () => {
+    const dir = await project();
+    await writeWorkspace(dir, { aliases: [{ name: "web", port: 3000 }] });
+    const text = await Bun.file(workspacePath(dir)).text();
+    expect(text.endsWith("}\n")).toBe(true);
+    expect(text).toContain('\n  "aliases"');
   });
 
-  test("an omitted description does not wipe the existing one", async () => {
-    const dir = tempDir();
-    await mergeWorkspaceAliases(dir, [{ name: "api", port: 3000, description: "keep" }]);
-    const file = await mergeWorkspaceAliases(dir, [{ name: "api", port: 4000 }]);
-    expect(file.aliases).toEqual([{ name: "api", port: 4000, description: "keep" }]);
+  test("overwrites an existing file", async () => {
+    const dir = await project(JSON.stringify({ aliases: [{ name: "old", port: 1000 }] }));
+    await writeWorkspace(dir, { aliases: [{ name: "new", port: 2000 }] });
+    expect((await readWorkspace(dir))!.aliases).toEqual([{ name: "new", port: 2000 }]);
+  });
+});
+
+describe("mergeWorkspace", () => {
+  test("starts from nothing", () => {
+    expect(mergeWorkspace(null, [{ name: "web", port: 3000 }])).toEqual({
+      aliases: [{ name: "web", port: 3000 }],
+    });
   });
 
-  test("later duplicates within one call win", async () => {
-    const dir = tempDir();
-    const file = await mergeWorkspaceAliases(dir, [
-      { name: "api", port: 1000 },
-      { name: "api", port: 2000 },
+  test("incoming wins, order is preserved, new names are appended", () => {
+    const existing = {
+      aliases: [
+        { name: "web", port: 3000 },
+        { name: "api", port: 4000 },
+      ],
+    };
+    expect(mergeWorkspace(existing, [{ name: "api", port: 4100 }, { name: "docs", port: 5000 }])).toEqual({
+      aliases: [
+        { name: "web", port: 3000 },
+        { name: "api", port: 4100 },
+        { name: "docs", port: 5000 },
+      ],
+    });
+  });
+
+  test("matches names case-insensitively and normalizes them", () => {
+    const merged = mergeWorkspace({ aliases: [{ name: "web", port: 3000 }] }, [{ name: "WEB", port: 3001 }]);
+    expect(merged.aliases).toEqual([{ name: "web", port: 3001 }]);
+  });
+
+  test("keeps an existing description when the incoming entry has none", () => {
+    const merged = mergeWorkspace({ aliases: [{ name: "web", port: 3000, description: "keep" }] }, [
+      { name: "web", port: 3001 },
     ]);
-    expect(file.aliases).toEqual([{ name: "api", port: 2000 }]);
+    expect(merged.aliases[0]).toEqual({ name: "web", port: 3001, description: "keep" });
   });
 
-  test("preserves unknown top-level keys and unknown entry keys", async () => {
-    const dir = tempDir();
-    await Bun.write(
-      workspacePath(dir),
-      JSON.stringify({
-        $schema: "./custom.json",
-        team: "core",
-        aliases: [{ name: "api", port: 3000, owner: "kevin" }],
-      }),
-    );
-    const file = await mergeWorkspaceAliases(dir, [{ name: "api", port: 3001 }]);
-    const raw = JSON.parse(await Bun.file(workspacePath(dir)).text());
-    expect(raw.team).toBe("core");
-    expect(raw.$schema).toBe("./custom.json");
-    expect(file.aliases).toEqual([{ name: "api", port: 3001, owner: "kevin" } as never]);
+  test("preserves $schema and does not mutate the input", () => {
+    const existing = { $schema: "s", aliases: [{ name: "web", port: 3000 }] };
+    const merged = mergeWorkspace(existing, [{ name: "web", port: 9999 }]);
+    expect(merged.$schema).toBe("s");
+    expect(existing.aliases[0]!.port).toBe(3000);
   });
 
-  test("keeps a stable sort order regardless of insertion order", async () => {
-    const dir = tempDir();
-    await mergeWorkspaceAliases(dir, [
-      { name: "web", port: 5173 },
-      { name: "api", port: 3000 },
-    ]);
-    const file = await mergeWorkspaceAliases(dir, [{ name: "docs", port: 4000 }]);
-    expect(file.aliases.map((a) => a.name)).toEqual(["api", "docs", "web"]);
-  });
-
-  test("is idempotent on disk", async () => {
-    const dir = tempDir();
-    await mergeWorkspaceAliases(dir, [{ name: "api", port: 3000 }]);
-    const once = await Bun.file(workspacePath(dir)).text();
-    await mergeWorkspaceAliases(dir, [{ name: "api", port: 3000 }]);
-    expect(await Bun.file(workspacePath(dir)).text()).toBe(once);
-  });
-
-  test("leaves no temp files behind", async () => {
-    const dir = tempDir();
-    await mergeWorkspaceAliases(dir, [{ name: "api", port: 3000 }]);
-    const entries = [...new Bun.Glob("*").scanSync({ cwd: dir, dot: true })];
-    expect(entries).toEqual([WORKSPACE_FILENAME]);
+  test("merging nothing is a copy", () => {
+    expect(mergeWorkspace({ aliases: [{ name: "web", port: 3000 }] }, [])).toEqual({
+      aliases: [{ name: "web", port: 3000 }],
+    });
   });
 });

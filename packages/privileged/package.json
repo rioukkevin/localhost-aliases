@@ -1,0 +1,8 @@
+{
+  "name": "@localhost-aliases/privileged", "version": "2.0.0", "private": true, "type": "module",
+  "main": "./prompt.ts",
+  "exports": { ".": "./prompt.ts" },
+  "files": ["apply.sh", "uninstall.sh", "lib.sh", "prompt.ts", "README.md"],
+  "dependencies": { "@localhost-aliases/core": "workspace:*" },
+  "scripts": { "test": "bun test" }
+}

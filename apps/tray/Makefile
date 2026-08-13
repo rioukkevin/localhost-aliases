@@ -1,71 +1,49 @@
-# Localhost Aliases — menu bar app.
-# No SwiftPM, no dependencies: swiftc + the system frameworks, assembled into a .app by hand.
+# Swift menu-bar app. System frameworks only — no SwiftPM, no dependencies.
+#
+#   make build   compile the binary into build/
+#   make app     assemble Contents/MacOS + Info.plist into the .app
+#   make clean   remove build output
+#
+# `app` never deletes Contents/Resources: packages/build/bundle.sh fills that directory with
+# bun, the dashboard, the forwarder and privileged/, and the two steps must be order-independent.
 
-APP_NAME   := LocalhostAliases
-BUNDLE     := $(APP_NAME).app
-BUILD_DIR  := .build
-BINARY     := $(BUILD_DIR)/$(APP_NAME)
-TEST_BIN   := $(BUILD_DIR)/TrayTests
-SOURCES    := $(wildcard Sources/*.swift)
-# Everything but the entry point: the test runner brings its own `main.swift`.
-LIB_SOURCES := $(filter-out Sources/main.swift,$(SOURCES))
-TEST_SOURCES := $(wildcard Tests/*.swift)
-HELPER_PLIST := LaunchDaemons/dev.localhost-aliases.helper.plist
+.PHONY: help build app clean
 
-ARCH       := $(shell uname -m)
-DEPLOY_MIN := 13.0
-SDK        := $(shell xcrun --show-sdk-path --sdk macosx)
+VERSION   ?= 2.0.0
+NAME      := LocalhostAliases
+BUILD     := build
+DIST      ?= ../../dist
+APP       ?= $(DIST)/$(NAME).app
+DEPLOY    ?= 13.0
+SDK       := $(shell xcrun --show-sdk-path --sdk macosx)
+SOURCES   := $(wildcard Sources/*.swift)
 
-# ServiceManagement is what registers the privileged helper and launch-at-login (macOS 13+).
-SWIFTFLAGS := -target $(ARCH)-apple-macos$(DEPLOY_MIN) -sdk $(SDK) \
-              -framework AppKit -framework Foundation -framework ServiceManagement
+SWIFTFLAGS := -O -wmo \
+	-target arm64-apple-macos$(DEPLOY) \
+	-sdk $(SDK) \
+	-framework AppKit \
+	-framework Foundation
 
-# Ad-hoc by default so `make app` needs no keychain access and raises no dialog.
-# Production signing is `scripts/package/` — or pass the identity explicitly:
-#   make app CODESIGN_ID="Developer ID Application: RIOU Kevin (UYB68P6HH7)"
-CODESIGN_ID ?= -
+help:
+	@echo "make build   compile $(BUILD)/$(NAME)"
+	@echo "make app     assemble $(APP)"
+	@echo "make clean   remove $(BUILD) and the app's MacOS payload"
 
-.PHONY: all build app test run clean
+build: $(BUILD)/$(NAME)
 
-all: app
+$(BUILD)/$(NAME): $(SOURCES)
+	@mkdir -p $(BUILD)
+	@swiftc $(SWIFTFLAGS) -o $@ $(SOURCES)
+	@echo "built $@"
 
-## build — compile the executable into .build/
-build: $(BINARY)
-
-$(BINARY): $(SOURCES)
-	@mkdir -p $(BUILD_DIR)
-	swiftc -O $(SWIFTFLAGS) -o $@ $(SOURCES)
-
-## test — compile and run the unit tests (pure logic; no AppKit UI is instantiated)
-test: $(TEST_BIN)
-	@$(TEST_BIN)
-
-$(TEST_BIN): $(LIB_SOURCES) $(TEST_SOURCES)
-	@mkdir -p $(BUILD_DIR)
-	swiftc $(SWIFTFLAGS) -o $@ $(LIB_SOURCES) $(TEST_SOURCES)
-
-## app — assemble LocalhostAliases.app next to this Makefile
-##
-## This produces the *tray half* of the production layout (docs/PHASE4.md §1):
-## Contents/MacOS/LocalhostAliases + Contents/Library/LaunchDaemons/. The payload the
-## installed app also carries — Contents/MacOS/la-helper, Contents/Resources/bin/bun and
-## Contents/Resources/web — is added by scripts/package/. Without it the app falls back to
-## running the dashboard from the checkout, which is what you want while developing.
 app: build
-	@rm -rf $(BUNDLE)
-	@mkdir -p $(BUNDLE)/Contents/MacOS $(BUNDLE)/Contents/Resources $(BUNDLE)/Contents/Library/LaunchDaemons
-	@cp Info.plist $(BUNDLE)/Contents/Info.plist
-	@cp $(BINARY) $(BUNDLE)/Contents/MacOS/$(APP_NAME)
-	@cp $(HELPER_PLIST) $(BUNDLE)/Contents/Library/LaunchDaemons/
-	@printf 'APPL????' > $(BUNDLE)/Contents/PkgInfo
-	@codesign --force --sign "$(CODESIGN_ID)" $(BUNDLE) \
-	  || echo "note: codesign failed, bundle left unsigned"
-	@echo "built $(CURDIR)/$(BUNDLE)"
+	@mkdir -p "$(APP)/Contents/MacOS" "$(APP)/Contents/Resources"
+	@cp $(BUILD)/$(NAME) "$(APP)/Contents/MacOS/$(NAME)"
+	@sed 's/@VERSION@/$(VERSION)/g' Info.plist > "$(APP)/Contents/Info.plist"
+	@printf 'APPL????' > "$(APP)/Contents/PkgInfo"
+	@echo "assembled $(APP) (Resources are filled by packages/build/bundle.sh)"
 
-## run — build and launch the app (it appears in the menu bar, not the dock)
-run: app
-	open $(BUNDLE)
-
-## clean — remove build products
 clean:
-	rm -rf $(BUILD_DIR) $(BUNDLE)
+	@rm -rf $(BUILD)
+	@rm -rf "$(APP)/Contents/MacOS" "$(APP)/Contents/Info.plist" "$(APP)/Contents/PkgInfo"
+	@echo "cleaned"

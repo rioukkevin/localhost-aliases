@@ -7,11 +7,8 @@ build/
 .DS_Store
 .env
 .env.local
-e2e/test-results/
-e2e/playwright-report/
 apps/tray/.build/
 apps/tray/LocalhostAliases.app/
 *.log
 .next-test*/
-packages/web/.next-e2e/
 .next*.lock

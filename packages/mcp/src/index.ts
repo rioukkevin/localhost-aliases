@@ -1,18 +1,12 @@
 #!/usr/bin/env bun
 /**
- * stdio entrypoint. stdout belongs to the JSON-RPC stream — every diagnostic must
- * go to stderr or it corrupts the protocol.
+ * stdio entrypoint. Compiled into the app bundle as Contents/Resources/mcp by
+ * packages/build/bundle.sh; run through Bun from a checkout in development.
+ *
+ * Nothing may be written to stdout except MCP frames — stdout is the transport.
  */
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { createServer, SERVER_NAME, SERVER_VERSION } from "./server.ts";
-import { baseUrl } from "./client.ts";
+import { createServer } from "./server.ts";
 
 const server = createServer();
 await server.connect(new StdioServerTransport());
-console.error(`${SERVER_NAME} v${SERVER_VERSION} ready on stdio (dashboard: ${baseUrl()})`);
-
-for (const signal of ["SIGINT", "SIGTERM"] as const) {
-  process.on(signal, () => {
-    void server.close().finally(() => process.exit(0));
-  });
-}
