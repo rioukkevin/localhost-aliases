@@ -51,6 +51,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MenuAc
         poller.start()
 
         installSignalHandlers()
+        openDashboardOnFirstRun()
+    }
+
+    /// The app has no Dock icon and never opens a window, so on a genuine first run nothing
+    /// visibly happens and the menu-bar icon is easy to miss. If there is no config yet, wait
+    /// for the dashboard to answer and open onboarding once. Subsequent launches stay silent.
+    private func openDashboardOnFirstRun() {
+        guard !FileManager.default.fileExists(atPath: Paths.configPath) else { return }
+        log.log("first run: no config yet, will open the dashboard once it is ready")
+        waitForDashboard(attemptsLeft: 60)
+    }
+
+    private func waitForDashboard(attemptsLeft: Int) {
+        guard attemptsLeft > 0 else {
+            log.log("first run: dashboard did not answer in time; use the menu-bar icon")
+            return
+        }
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self else { return }
+            if PortProbe.isOpen(port: self.state.config.dashboardPort) {
+                DispatchQueue.main.async { self.open(urlString: self.state.dashboardURL) }
+            } else {
+                self.waitForDashboard(attemptsLeft: attemptsLeft - 1)
+            }
+        }
     }
 
     /// SIGTERM/SIGINT must shut down as cleanly as Quit does — otherwise the liveness file
