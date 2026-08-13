@@ -254,12 +254,22 @@ la_forwarder_start() { # <forwarder> <log-dir>
   mkdir -p "$logdir" 2>/dev/null || true
   la_chown_owner "$logdir"
 
-  # Detached: nohup + no controlling stdin, so it survives the admin shell exiting.
-  nohup "$binary" >>"${logdir}/forwarder.log" 2>&1 </dev/null &
+  # Detached WITHOUT nohup. Under `osascript ... with administrator privileges` there is no
+  # controlling terminal, and nohup fails outright there:
+  #   nohup: can't detach from console: Inappropriate ioctl for device
+  # nohup buys nothing anyway once stdout/stderr go to a file and stdin comes from /dev/null —
+  # with no controlling terminal there is no SIGHUP to protect against. `disown` drops it from
+  # the job table so this shell cannot signal it on exit; the child is reparented to launchd.
+  "$binary" >>"${logdir}/forwarder.log" 2>&1 </dev/null &
   pid=$!
+  disown "$pid" 2>/dev/null || true
 
   for i in 1 2 3 4 5 6 7 8 9 10; do
-    kill -0 "$pid" 2>/dev/null || la_die "the forwarder exited immediately; see ${logdir}/forwarder.log"
+    if ! kill -0 "$pid" 2>/dev/null; then
+      # Surface the real reason instead of just "it exited": the log is the only witness.
+      la_log "forwarder log tail: $(tail -n 5 "${logdir}/forwarder.log" 2>/dev/null | tr '\n' ' ')"
+      la_die "the forwarder exited immediately; see ${logdir}/forwarder.log"
+    fi
     sleep 0.1
   done
   la_log "started the forwarder, pid ${pid}"

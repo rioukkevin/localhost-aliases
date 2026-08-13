@@ -84,24 +84,22 @@ export interface RuntimeLayout {
   mcpEntry: string;
 }
 
-export function runtimeLayout(): RuntimeLayout {
-  const override = process.env.LA_RUNTIME_ROOT;
-  const exec = process.execPath;
-  const marker = ".app/Contents/";
-  const idx = exec.indexOf(marker);
-  if (!override && idx !== -1) {
-    const resources = join(exec.slice(0, idx + marker.length), "Resources");
-    return {
-      mode: "bundle",
-      root: resources,
-      bun: join(resources, "bin", "bun"),
-      dashboardDir: join(resources, "dashboard"),
-      forwarder: join(resources, "forwarder"),
-      applyScript: join(resources, "privileged", "apply.sh"),
-      mcpEntry: join(resources, "mcp"),
-    };
-  }
-  const root = override ?? process.env.LA_REPO_ROOT ?? process.cwd();
+const BUNDLE_MARKER = ".app/Contents/";
+const RESOURCES_SUFFIX = "/Contents/Resources";
+
+function bundleLayout(resources: string): RuntimeLayout {
+  return {
+    mode: "bundle",
+    root: resources,
+    bun: join(resources, "bin", "bun"),
+    dashboardDir: join(resources, "dashboard"),
+    forwarder: join(resources, "forwarder"),
+    applyScript: join(resources, "privileged", "apply.sh"),
+    mcpEntry: join(resources, "mcp"),
+  };
+}
+
+function devLayout(root: string): RuntimeLayout {
   return {
     mode: "dev",
     root,
@@ -111,6 +109,33 @@ export function runtimeLayout(): RuntimeLayout {
     applyScript: join(root, "packages", "privileged", "apply.sh"),
     mcpEntry: join(root, "packages", "mcp", "src", "index.ts"),
   };
+}
+
+/**
+ * Resolve where the runtime pieces live.
+ *
+ * The mode is decided by what the root LOOKS LIKE, never by whether an override was supplied.
+ * The tray always passes LA_RUNTIME_ROOT (pointing at Contents/Resources), so treating an
+ * override as "must be dev" silently gave the installed app the checkout layout: it advertised
+ * <Resources>/packages/privileged/apply.sh, which does not exist, and the same for the forwarder.
+ * LA_RUNTIME_MODE forces the answer when a test needs the dev layout under a bundle-shaped path.
+ */
+export function runtimeLayout(): RuntimeLayout {
+  const forced = process.env.LA_RUNTIME_MODE;
+  const override = process.env.LA_RUNTIME_ROOT;
+
+  if (override) {
+    const looksLikeBundle = override.endsWith(RESOURCES_SUFFIX);
+    const bundle = forced ? forced === "bundle" : looksLikeBundle;
+    return bundle ? bundleLayout(override) : devLayout(override);
+  }
+
+  const exec = process.execPath;
+  const idx = exec.indexOf(BUNDLE_MARKER);
+  if (idx !== -1 && forced !== "dev") {
+    return bundleLayout(join(exec.slice(0, idx + BUNDLE_MARKER.length), "Resources"));
+  }
+  return devLayout(process.env.LA_REPO_ROOT ?? process.cwd());
 }
 
 export function dashboardUrl(port = Number(process.env.LA_DASHBOARD_PORT ?? 7788)): string {
