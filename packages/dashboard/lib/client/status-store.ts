@@ -25,6 +25,12 @@ export interface StatusState {
   system: SystemState | null;
   /** The config-vs-machine diff, and the command that would close it. */
   sync: SyncReport | null;
+  /**
+   * Is the menu-bar app answering its heartbeat? `null` until the first
+   * successful read — before that the UI must say "unknown", never "not
+   * running": that would be a false statement about the user's machine.
+   */
+  trayAlive: boolean | null;
   /** A mutation is in flight; the patchbay header shows "applying…". */
   busy: boolean;
   updatedAt: number;
@@ -38,6 +44,7 @@ const EMPTY: StatusState = {
   aliases: [],
   system: null,
   sync: null,
+  trayAlive: null,
   busy: false,
   updatedAt: 0,
 };
@@ -65,11 +72,14 @@ export function refreshStatus(): Promise<void> {
         aliases: payload.aliases,
         system: payload.system,
         sync: payload.sync,
+        trayAlive: payload.trayAlive,
         updatedAt: Date.now(),
       });
     })
     .catch((err: unknown) => {
-      set({ loaded: true, reachable: false, error: errorMessage(err) });
+      // The tray reading came from the server we just lost, so it is no longer
+      // knowledge — it drops back to unknown while the aliases stay on screen.
+      set({ loaded: true, reachable: false, error: errorMessage(err), trayAlive: null });
     })
     .finally(() => {
       inFlight = null;

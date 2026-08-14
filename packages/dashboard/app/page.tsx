@@ -2,46 +2,33 @@
 
 import { useState } from "react";
 import { IP_POOL_END, IP_POOL_START } from "@localhost-aliases/core/types";
-import type { CreateAliasInput, ValidationIssue } from "@localhost-aliases/core/types";
-import { AliasEditor } from "../components/aliases/AliasEditor.tsx";
-import { AliasList } from "../components/aliases/AliasList.tsx";
-import { useAliasActions } from "../components/aliases/useAliasActions.ts";
+import { UnassignedList } from "../components/aliases/UnassignedList.tsx";
+import { ProjectDrawer } from "../components/projects/ProjectDrawer.tsx";
+import { ProjectGrid } from "../components/projects/ProjectGrid.tsx";
+import { useProjects } from "../components/projects/useProjects.ts";
 import { Banner } from "../components/ui/Banner.tsx";
 import { PageBody, PageHeader } from "../components/ui/PageHeader.tsx";
-import { Panel } from "../components/ui/Panel.tsx";
-import { ApiError } from "../lib/client/api.ts";
 import { useStatus } from "../lib/client/status-store.ts";
 
 const POOL_SIZE = IP_POOL_END - IP_POOL_START + 1;
 
-export default function AliasesPage() {
+/**
+ * The whole dashboard, on one page: folders as a grid, their aliases behind a drawer,
+ * and everything that belongs to no folder listed underneath. There is no navigation
+ * because there is nowhere else to go.
+ */
+export default function DashboardPage() {
   const { aliases, config, loaded, busy } = useStatus();
-  const actions = useAliasActions();
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
-  // Remounting the form is the whole reset: no field state survives a successful create.
-  const [formKey, setFormKey] = useState(0);
-  const [serverIssues, setServerIssues] = useState<ValidationIssue[]>([]);
+  const { projects, linking, writing, addProject, writeWorkspace } = useProjects();
+  const [openPath, setOpenPath] = useState<string | null>(null);
+
+  const open = projects.find((p) => p.path === openPath) ?? null;
   const tld = config?.tld ?? "local";
   const full = aliases.length >= POOL_SIZE;
 
-  async function create(input: CreateAliasInput) {
-    setCreating(true);
-    setServerIssues([]);
-    try {
-      await actions.create(input);
-      setFormKey((n) => n + 1);
-    } catch (err) {
-      // The toast already said what happened; put field problems back on their fields.
-      if (err instanceof ApiError) setServerIssues(err.issues);
-    } finally {
-      setCreating(false);
-    }
-  }
-
   return (
     <PageBody>
-      <PageHeader title="Aliases">
+      <PageHeader title="Patchbay">
         One name per dev server. A name points at a loopback address, and a raw TCP forward
         splices port 80 there to the port your server already listens on — so WebSockets and
         HMR pass straight through. Project aliases are <span className="mono">http://</span>{" "}
@@ -56,30 +43,25 @@ export default function AliasesPage() {
           </Banner>
         ) : null}
 
-        <Panel title="new alias" meta="127.0.0.x:80 → 127.0.0.1:port">
-          <AliasEditor
-            key={formKey}
-            aliases={aliases}
-            tld={tld}
-            submitLabel="Patch it"
-            busy={creating}
-            serverIssues={serverIssues}
-            onSubmit={create}
-          />
-        </Panel>
-
-        <AliasList
-          aliases={aliases}
-          tld={tld}
+        <ProjectGrid
+          projects={projects}
           loaded={loaded}
-          busy={busy}
-          editingId={editingId}
-          onEdit={setEditingId}
-          onSave={(id, input) => actions.update(id, input).catch(() => {})}
-          onDelete={(alias) => actions.remove(alias).catch(() => {})}
-          onDetach={(alias) => actions.move(alias, null).catch(() => {})}
+          linking={linking}
+          onAdd={(path) => void addProject(path)}
+          onOpen={setOpenPath}
         />
+
+        <UnassignedList aliases={aliases} tld={tld} loaded={loaded} busy={busy} />
       </div>
+
+      <ProjectDrawer
+        project={open}
+        aliases={aliases}
+        tld={tld}
+        writing={writing}
+        onClose={() => setOpenPath(null)}
+        onWriteWorkspace={writeWorkspace}
+      />
     </PageBody>
   );
 }

@@ -1,8 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
-import { DriftBanner } from "../components/DriftBanner.tsx";
-import { NavRail } from "../components/NavRail.tsx";
-import { StatusStrip } from "../components/StatusStrip.tsx";
+import { AppShell } from "../components/shell/AppShell.tsx";
 import { ToastProvider } from "../components/ui/Toast.tsx";
 import "./globals.css";
 
@@ -14,6 +12,10 @@ export const metadata: Metadata = {
 // No manual theme switch: the app follows the OS, and light is a full re-theme.
 export const viewport: Viewport = { colorScheme: "dark light" };
 
+/**
+ * Stays a server component: the chrome needs a pathname, a drawer and a poll, so all
+ * of that lives in AppShell and this file keeps rendering the document itself.
+ */
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
@@ -26,17 +28,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         </a>
 
         <ToastProvider>
-          <NavRail />
-          <div className="lg:pl-56">
-            <StatusStrip />
-            <main id="content">
-              {/* empty:hidden keeps the spacing out of the way when nothing has drifted. */}
-              <div className="mx-auto w-full max-w-5xl px-4 pt-8 empty:hidden md:px-8 md:pt-10">
-                <DriftBanner />
-              </div>
-              {children}
-            </main>
-          </div>
+          <AppShell>{children}</AppShell>
         </ToastProvider>
       </body>
     </html>

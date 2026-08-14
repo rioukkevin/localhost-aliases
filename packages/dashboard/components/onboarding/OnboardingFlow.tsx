@@ -248,7 +248,7 @@ export function OnboardingFlow() {
             optional
             actions={
               <>
-                <LinkButton href="/settings" variant="outline">
+                <LinkButton href="/#settings" variant="outline">
                   Turn it on in Settings
                 </LinkButton>
                 <Button

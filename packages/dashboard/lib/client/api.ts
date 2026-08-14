@@ -118,6 +118,12 @@ export interface StatusPayload {
   sync: SyncReport;
   dashboardHostname: string;
   capacity: { used: number; total: number; remaining: number };
+  /**
+   * Is the menu-bar app answering? `null` means the server did not say — never
+   * `false`, because "the menu-bar app is not running" is a claim about the
+   * user's machine and we only make it when the machine was actually asked.
+   */
+  trayAlive: boolean | null;
 }
 
 const NO_SYNC: SyncReport = {
@@ -152,6 +158,7 @@ export async function fetchStatus(): Promise<StatusPayload> {
     sync: body.sync ?? NO_SYNC,
     dashboardHostname: body.dashboardHostname ?? `index.${body.config.tld}`,
     capacity: body.capacity ?? { used: 0, total: 253, remaining: 253 },
+    trayAlive: typeof body.trayAlive === "boolean" ? body.trayAlive : null,
   };
 }
 
@@ -281,6 +288,45 @@ export async function runOnboarding(
     ...options,
   });
   return normalizeOnboarding(body);
+}
+
+// ---------------------------------------------------------------------------
+// MCP (the settings drawer's section; the onboarding step writes the same files)
+// ---------------------------------------------------------------------------
+
+export interface McpClientState {
+  id: string;
+  name: string;
+  configPath: string;
+  /** The client's own config file exists. */
+  installed: boolean;
+  /** Our server is registered in it. */
+  configured: boolean;
+}
+
+export interface McpState {
+  clients: McpClientState[];
+  /** Ready-to-paste TOML for users who would rather edit Codex's config themselves. */
+  codexSnippet: string;
+  configured: boolean;
+}
+
+function normalizeMcp(body: Partial<McpState>): McpState {
+  const clients = body.clients ?? [];
+  return {
+    clients,
+    codexSnippet: body.codexSnippet ?? "",
+    configured: body.configured ?? clients.some((c) => c.configured),
+  };
+}
+
+export async function fetchMcp(): Promise<McpState> {
+  return normalizeMcp(await request<Partial<McpState>>("/api/mcp"));
+}
+
+export async function installMcp(client: string): Promise<McpState> {
+  const body = await send<{ mcp?: Partial<McpState> }>("/api/mcp/install", "POST", { client });
+  return normalizeMcp(body.mcp ?? {});
 }
 
 // ---------------------------------------------------------------------------

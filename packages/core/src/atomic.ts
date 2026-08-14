@@ -1,5 +1,6 @@
 /** Shared write helpers. Internal: not re-exported from index.ts. */
 import { chmod, mkdir, rename, stat, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { basename, dirname, join } from "node:path";
 
 /**
@@ -18,7 +19,11 @@ export async function writeFileAtomic(path: string, data: string): Promise<void>
     mode = undefined;
   }
 
-  const tmp = join(dir, `.${basename(path)}.${process.pid}.${Date.now()}.tmp`);
+  // pid+timestamp is NOT unique: two writes in the same millisecond in the same process get
+  // the same temp name, the first rename wins and the second fails with ENOENT. The dashboard
+  // polls, so concurrent writes of desired-state.json are routine — this surfaced as an
+  // intermittent "Cannot read the setup state" banner. A uuid makes the name collision-proof.
+  const tmp = join(dir, `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`);
   await writeFile(tmp, data, "utf8");
   if (mode !== undefined) await chmod(tmp, mode);
   await rename(tmp, path);

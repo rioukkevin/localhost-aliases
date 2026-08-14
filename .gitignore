@@ -12,3 +12,4 @@ apps/tray/LocalhostAliases.app/
 *.log
 .next-test*/
 .next*.lock
+.*.bun-build

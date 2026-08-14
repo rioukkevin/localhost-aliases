@@ -3,6 +3,7 @@
  * routes.json, onboarding.json). node:fs is used rather than Bun.file so this module
  * also works during `next build`, which runs under node.
  */
+import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
@@ -27,7 +28,8 @@ export async function readJsonOrNull<T>(path: string): Promise<T | null> {
 /** Temp file + rename, so a reader never sees a half-written file. */
 export async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
-  const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
+  // Same collision as core/atomic.ts: a millisecond is not a unique suffix under polling.
+  const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
   await writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, "utf8");
   await rename(tmp, path);
 }

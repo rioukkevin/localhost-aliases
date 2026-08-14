@@ -109,3 +109,13 @@ export function IconFolder(props: IconProps) {
     </Svg>
   );
 }
+
+/** Settings: a cog — inner hub plus eight teeth on the same 16x16 grid. */
+export function IconGear(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <circle cx="8" cy="8" r="2.5" />
+      <path d="M8 1.6v2M8 12.4v2M1.6 8h2M12.4 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M12.5 3.5l-1.4 1.4M4.9 11.1l-1.4 1.4" />
+    </Svg>
+  );
+}

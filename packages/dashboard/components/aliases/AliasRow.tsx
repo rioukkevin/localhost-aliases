@@ -17,6 +17,8 @@ export interface AliasRowProps {
   aliases: readonly AliasView[];
   tld: string;
   editing: boolean;
+  /** Hides the second line's folder path — the drawer already names the folder. */
+  hideProjectPath?: boolean;
   onEdit: (id: string | null) => void;
   onSave: (id: string, input: CreateAliasInput) => Promise<void>;
   onDelete: (alias: AliasView) => Promise<void>;
@@ -29,12 +31,19 @@ const STATUS_NOTE: Record<AliasView["status"], string> = {
   unknown: "not checked yet",
 };
 
-/** One patch cable: a name on the left, the port your dev server already uses on the right. */
+/**
+ * One patch cable: a name on the left, the port your dev server already uses on the right.
+ *
+ * The breakpoints are container queries, not viewport ones: the same row has to read
+ * correctly full-width on the page and inside a narrow project drawer, and only the
+ * container knows which it is. @xl ≈ the old `sm:`, @2xl ≈ `md:`, @4xl ≈ `lg:`.
+ */
 export function AliasRow({
   alias,
   aliases,
   tld,
   editing,
+  hideProjectPath = false,
   onEdit,
   onSave,
   onDelete,
@@ -66,7 +75,7 @@ export function AliasRow({
 
   if (editing) {
     return (
-      <li className="bg-raised px-4 py-5 md:px-8">
+      <li className="bg-raised px-4 py-5 @2xl:px-8">
         <p className="mb-4 text-[10px] font-medium uppercase tracking-[0.16em] text-faint">
           editing {alias.hostname}
         </p>
@@ -85,14 +94,14 @@ export function AliasRow({
 
   return (
     <li
-      className="flex flex-wrap items-center gap-x-4 gap-y-3 px-4 py-4 transition-colors hover:bg-raised md:px-8"
+      className="flex flex-wrap items-center gap-x-4 gap-y-3 px-4 py-4 transition-colors hover:bg-raised @2xl:px-8"
       data-testid="alias-row"
     >
       <span className="order-1 shrink-0" title={STATUS_NOTE[alias.status]}>
         <StatusDot status={alias.status} />
       </span>
 
-      <div className="order-2 min-w-0 flex-1 lg:w-[22rem] lg:flex-none">
+      <div className="order-2 min-w-0 flex-1 @4xl:w-[22rem] @4xl:flex-none">
         <p className="mono flex items-center gap-2 text-[19px] font-medium leading-tight text-ink">
           <span className="truncate">
             {alias.name}
@@ -106,20 +115,20 @@ export function AliasRow({
         </p>
         <p className="mono mt-0.5 truncate text-[11px] text-faint">
           {alias.url}
-          {alias.projectPath ? ` · ${tildePath(alias.projectPath)}` : ""}
+          {alias.projectPath && !hideProjectPath ? ` · ${tildePath(alias.projectPath)}` : ""}
         </p>
       </div>
 
-      <div className="order-4 basis-full pl-[1.9rem] sm:order-3 sm:basis-0 sm:flex-1 sm:pl-0">
+      <div className="order-4 basis-full pl-[1.9rem] @xl:order-3 @xl:basis-0 @xl:flex-1 @xl:pl-0">
         <PatchCable status={alias.status} />
       </div>
 
-      <p className="mono order-5 w-[4.5rem] text-right text-[17px] text-ink sm:order-4">
+      <p className="mono order-5 w-[4.5rem] text-right text-[17px] text-ink @xl:order-4">
         <span className="text-faint">:</span>
         {alias.port}
       </p>
 
-      <div className="order-3 flex w-[11rem] shrink-0 items-center justify-end gap-0.5 sm:order-5">
+      <div className="order-3 flex w-[11rem] shrink-0 items-center justify-end gap-0.5 @xl:order-5">
         <CopyButton value={alias.url} what="URL" />
         <a
           href={alias.url}

@@ -127,6 +127,39 @@ body {
   animation: pulse-dot 2.4s ease-in-out infinite;
 }
 
+/* Drawers slide in from the edge they are anchored to, and the scrim fades with
+   them. Both are one-shot entrances, so the reduced-motion kill switch below
+   collapses them to nothing without leaving an element mid-flight. */
+@keyframes drawer-in-right {
+  from {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes drawer-in-left {
+  from {
+    transform: translateX(-100%);
+  }
+}
+
+@keyframes scrim-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.drawer-in-right {
+  animation: drawer-in-right 180ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.drawer-in-left {
+  animation: drawer-in-left 180ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.scrim-in {
+  animation: scrim-in 180ms linear;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
