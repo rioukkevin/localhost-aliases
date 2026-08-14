@@ -1,0 +1,24 @@
+{
+  "name": "@localhost-aliases/site",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --bun next dev -p 3100",
+    "build": "next build",
+    "start": "bun --bun next start -p 3100",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@vercel/blob": "^0.27.0",
+    "next": "^15.1.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "tailwindcss": "^4.0.0",
+    "@tailwindcss/postcss": "^4.0.0"
+  }
+}

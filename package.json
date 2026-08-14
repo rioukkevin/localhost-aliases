@@ -2,10 +2,22 @@
   "name": "localhost-aliases",
   "private": true,
   "version": "2.0.0",
-  "workspaces": ["packages/*"],
+  "workspaces": [
+    "packages/core",
+    "packages/dashboard",
+    "packages/forwarder",
+    "packages/mcp",
+    "packages/privileged",
+    "packages/site"
+  ],
   "scripts": {
     "dev": "bun run --cwd packages/dashboard dev",
-    "test": "bun test packages"
+    "test": "bun test packages/core packages/dashboard packages/forwarder packages/mcp packages/privileged packages/site packages/build",
+    "assets": "bun run --cwd packages/assets render:all",
+    "test:all": "bun run test && bun test packages/assets"
   },
-  "devDependencies": { "@types/bun": "latest", "typescript": "^5.7.0" }
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.7.0"
+  }
 }

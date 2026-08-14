@@ -1,0 +1,68 @@
+name: site
+
+# Typechecks and builds packages/site so a broken site cannot be merged.
+#
+# It does not deploy: Vercel owns that, from the project whose root directory is packages/site.
+# The project settings are documented in docs/RELEASE.md.
+#
+# Nothing here touches packages/assets. Brand assets are rendered locally and committed
+# (docs/WEB.md); the site build consumes packages/site/public/* exactly as it finds them, so a
+# missing icon here means someone forgot to commit a render — not that CI should render one.
+
+on:
+  pull_request:
+    paths:
+      - "packages/site/**"
+      - ".github/workflows/site.yml"
+      - "package.json"
+      - "bun.lock"
+      - "tsconfig.base.json"
+  push:
+    branches: [master]
+    paths:
+      - "packages/site/**"
+      - ".github/workflows/site.yml"
+      - "package.json"
+      - "bun.lock"
+      - "tsconfig.base.json"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.2.5"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: |
+          set -euo pipefail
+          if [ -f packages/site/tsconfig.json ]; then
+            bunx tsc --noEmit -p packages/site/tsconfig.json
+          else
+            echo "::warning::packages/site/tsconfig.json is missing — relying on next build's typecheck"
+          fi
+
+      - name: Unit tests
+        run: |
+          set -euo pipefail
+          if find packages/site -not -path '*/node_modules/*' \( -name '*.test.ts' -o -name '*.test.tsx' \) | grep -q .; then
+            bun test packages/site
+          else
+            echo "packages/site has no unit tests yet"
+          fi
+
+      # The build must succeed with no manifest and no blob URL: until the first release is
+      # published, `releases/latest.json` does not exist and the site shows the build-from-source
+      # instructions instead. Leaving the var empty here keeps that path exercised on every PR.
+      - name: Build
+        run: bun run --cwd packages/site build

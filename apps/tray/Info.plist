@@ -6,6 +6,11 @@
 	<string>en</string>
 	<key>CFBundleExecutable</key>
 	<string>LocalhostAliases</string>
+	<!-- Resources/AppIcon.icns, rendered by packages/assets. The extension is optional and
+	     conventionally omitted; LSUIElement keeps this out of the Dock, but Finder, Spotlight,
+	     the DMG and the About panel all read it. -->
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>dev.localhost-aliases.app</string>
 	<key>CFBundleInfoDictionaryVersion</key>

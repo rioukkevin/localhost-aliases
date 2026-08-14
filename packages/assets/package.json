@@ -1,0 +1,27 @@
+{
+  "name": "@localhost-aliases/assets",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Every brand asset is rendered from one source of truth, so nothing can drift.",
+  "scripts": {
+    "studio": "remotion studio",
+    "render:icon": "bun run scripts/render-icon.ts",
+    "render:web": "bun run scripts/render-web.ts",
+    "render:hero": "bun run scripts/render-hero.ts",
+    "render:all": "bun run scripts/render-all.ts",
+    "sync": "bun run scripts/sync.ts",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@remotion/bundler": "4.0.410",
+    "@remotion/cli": "4.0.410",
+    "@remotion/renderer": "4.0.410",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "remotion": "4.0.410"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0"
+  }
+}

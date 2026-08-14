@@ -3,6 +3,10 @@ node_modules/
 out/
 dist/
 build/
+# `build/` above is meant for compiled output (apps/tray/build). packages/build is source:
+# without this exception git silently drops the entire release pipeline, and CI checks out a
+# tree where `make bundle` has no bundle.sh to run.
+!packages/build/
 *.tsbuildinfo
 .DS_Store
 .env
