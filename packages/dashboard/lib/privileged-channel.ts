@@ -23,7 +23,7 @@ import {
   type PrivilegedResult,
 } from "@localhost-aliases/core";
 import { readJsonOrNull, writeJsonAtomic } from "./files.ts";
-import { writeRuntimeFiles } from "./service.ts";
+import { writeRuntimeFiles } from "./runtime-files.ts";
 
 const KINDS: readonly PrivilegedKind[] = ["apply", "uninstall"];
 
@@ -84,6 +84,15 @@ function ageMs(iso: string, now: number): number {
   // An unparseable timestamp is treated as ancient: better to report a stale request
   // than to leave the UI waiting on one that may never be answered.
   return Number.isNaN(at) ? Number.POSITIVE_INFINITY : now - at;
+}
+
+/**
+ * The answer to one specific request, or null while it is unanswered. The id must match:
+ * a result left behind by an earlier run is not the answer to this one.
+ */
+export async function readResultFor(id: string): Promise<PrivilegedResult | null> {
+  const result = await readResult();
+  return result !== null && result.id === id ? result : null;
 }
 
 // --- asking ------------------------------------------------------------------

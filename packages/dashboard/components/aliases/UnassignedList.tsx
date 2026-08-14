@@ -10,6 +10,7 @@ import { Panel } from "../ui/Panel.tsx";
 import { PatchCable } from "../ui/PatchCable.tsx";
 import { AliasEditor } from "./AliasEditor.tsx";
 import { AliasRows, AliasRowsSkeleton } from "./AliasRows.tsx";
+import { useAliasApply } from "./alias-apply.ts";
 import { useAliasActions } from "./useAliasActions.ts";
 
 export interface UnassignedListProps {
@@ -31,6 +32,7 @@ export interface UnassignedListProps {
  */
 export function UnassignedList({ aliases, tld, loaded, busy }: UnassignedListProps) {
   const actions = useAliasActions();
+  const applyOf = useAliasApply();
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -60,6 +62,7 @@ export function UnassignedList({ aliases, tld, loaded, busy }: UnassignedListPro
     aliases,
     tld,
     editingId,
+    applyOf,
     onEdit: setEditingId,
     onSave: (id: string, input: CreateAliasInput) => actions.update(id, input).catch(() => {}),
     onDelete: (alias: AliasView) => actions.remove(alias).catch(() => {}),

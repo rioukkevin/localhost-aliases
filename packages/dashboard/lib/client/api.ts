@@ -15,7 +15,7 @@
  *   POST   /api/pick-folder                                        -> { path, cancelled }
  *   GET    /api/onboarding                                         -> OnboardingPayload
  *   POST   /api/onboarding             { action, ... }             -> OnboardingPayload
- *   PATCH  /api/settings               { tld?, dashboardPort?, https? } -> { config, restartRequired }
+ *   PATCH  /api/settings               { tld?, dashboardPort?, https?, autoApply? } -> { config, restartRequired }
  *   POST   /api/apply                  (prepares only, never runs root work)
  *   POST   /api/privileged/request     { kind }                    -> { request, trayAlive }
  *   GET    /api/privileged/progress    ?id=…                       -> PrivilegedProgress
@@ -111,6 +111,40 @@ export interface SyncReport {
   intent: ApplyIntent;
 }
 
+/**
+ * Where automatic apply stands, as published by lib/service.ts. Mirrored here rather
+ * than imported for the reason at the top of this file. `null` means the server did not
+ * say — an older build, or a response that predates the field — and the UI reads that as
+ * idle, which is byte-for-byte the manual behaviour.
+ */
+export interface AutoApplyStatus {
+  state: "idle" | "scheduled" | "prompting" | "deferred" | "failed";
+  enabled: boolean;
+  requestId: string | null;
+  scheduledInMs: number | null;
+  dirty: boolean;
+  error: string | null;
+  reason: string | null;
+}
+
+const AUTO_APPLY_STATES = new Set(["idle", "scheduled", "prompting", "deferred", "failed"]);
+
+/** Fails soft: anything the server did not send, or sent malformed, becomes null. */
+export function toAutoApplyStatus(value: unknown): AutoApplyStatus | null {
+  if (typeof value !== "object" || value === null) return null;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.state !== "string" || !AUTO_APPLY_STATES.has(raw.state)) return null;
+  return {
+    state: raw.state as AutoApplyStatus["state"],
+    enabled: typeof raw.enabled === "boolean" ? raw.enabled : true,
+    requestId: typeof raw.requestId === "string" ? raw.requestId : null,
+    scheduledInMs: typeof raw.scheduledInMs === "number" ? raw.scheduledInMs : null,
+    dirty: raw.dirty === true,
+    error: typeof raw.error === "string" && raw.error !== "" ? raw.error : null,
+    reason: typeof raw.reason === "string" && raw.reason !== "" ? raw.reason : null,
+  };
+}
+
 export interface StatusPayload {
   config: Config;
   aliases: AliasView[];
@@ -124,6 +158,8 @@ export interface StatusPayload {
    * user's machine and we only make it when the machine was actually asked.
    */
   trayAlive: boolean | null;
+  /** The auto-apply reading. `null` when the server did not publish one. */
+  autoApply: AutoApplyStatus | null;
 }
 
 const NO_SYNC: SyncReport = {
@@ -159,6 +195,7 @@ export async function fetchStatus(): Promise<StatusPayload> {
     dashboardHostname: body.dashboardHostname ?? `index.${body.config.tld}`,
     capacity: body.capacity ?? { used: 0, total: 253, remaining: 253 },
     trayAlive: typeof body.trayAlive === "boolean" ? body.trayAlive : null,
+    autoApply: toAutoApplyStatus(body.autoApply),
   };
 }
 
@@ -337,6 +374,8 @@ export interface SettingsInput {
   tld?: string;
   dashboardPort?: number;
   https?: boolean;
+  /** docs/AUTOAPPLY.md — when false the product behaves exactly as it did before. */
+  autoApply?: boolean;
 }
 
 export interface SettingsResult {

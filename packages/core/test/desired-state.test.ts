@@ -20,6 +20,7 @@ const CONFIG: Config = {
   tld: "local",
   dashboardPort: 7788,
   https: false,
+  autoApply: true,
   aliases: [
     alias({ name: "index", port: 7788, ip: "127.0.0.2", reserved: true }),
     alias({ name: "myapp", port: 3000, ip: "127.0.0.3" }),

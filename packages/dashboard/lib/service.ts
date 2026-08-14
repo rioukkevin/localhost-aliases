@@ -19,7 +19,6 @@ import {
   configDir,
   createAlias,
   deleteAlias,
-  desiredStatePath,
   detectClients,
   getAlias,
   hostnameFor,
@@ -27,6 +26,7 @@ import {
   loadConfig,
   mcpServerSpec,
   codexSnippet,
+  desiredStatePath,
   probeAll,
   readWorkspace,
   routesPath,
@@ -52,9 +52,11 @@ import {
   type UpdateAliasInput,
   type WorkspaceAliasEntry,
 } from "@localhost-aliases/core";
-import { writeJsonAtomic } from "./files.ts";
+import { autoApplyScheduler } from "./auto-apply-runtime.ts";
 import { NotFoundError, invalid } from "./http.ts";
+import { writeRuntimeFiles } from "./runtime-files.ts";
 import { readSystemState, type SystemProbes } from "./system.ts";
+import type { AutoApply, AutoApplyStatus } from "./auto-apply.ts";
 
 export const APP_VERSION = "2.0.0";
 
@@ -95,6 +97,8 @@ export interface StateSnapshot {
   /** Raw bytes are forwarded, so TLS can never be terminated for project aliases. */
   httpsSupportedForAliases: false;
   configDir: string;
+  /** Where automatic apply stands, so the UI can be honest instead of guessing. */
+  autoApply: AutoApplyStatus;
 }
 
 export interface ServiceOptions {
@@ -102,6 +106,37 @@ export interface ServiceOptions {
   /** Skip liveness probing where the caller does not need statuses. */
   probeStatuses?: boolean;
   probeTimeoutMs?: number;
+  /** The auto-apply state machine. Defaults to the one process-wide scheduler. */
+  scheduler?: AutoApply;
+  /**
+   * False when this mutation was NOT something a user just did — startup reconciliation
+   * is the only such caller today. Only a user-initiated mutation may ever lead to an
+   * admin prompt, so this flag is the switch that keeps startup drift silent.
+   */
+  userInitiated?: boolean;
+}
+
+function schedulerFor(options: ServiceOptions): AutoApply {
+  return options.scheduler ?? autoApplyScheduler();
+}
+
+/**
+ * The one place a mutation can turn into an automatic admin prompt.
+ *
+ * `report.needsPrompt` is `diffDesiredState`'s verdict, reused rather than reimplemented:
+ * a port-only change leaves it false, and writing routes.json has already made that change
+ * live. Everything else about the decision — coalescing, the tray heartbeat, never looping
+ * on cancel — belongs to the scheduler.
+ */
+async function afterMutation(
+  config: Config,
+  report: SyncReport,
+  options: ServiceOptions,
+): Promise<AutoApplyStatus> {
+  const scheduler = schedulerFor(options);
+  scheduler.setEnabled(config.autoApply);
+  if (options.userInitiated === false) return scheduler.snapshot();
+  return scheduler.notifyMutation({ needsRoot: report.needsPrompt });
 }
 
 // --- desired state ----------------------------------------------------------
@@ -129,15 +164,7 @@ function reportFrom(diff: StateDiff): SyncReport {
   };
 }
 
-/**
- * Write the two files the privileged script and the forwarder consume. Routes are
- * written separately because the forwarder watches that file: a port-only change is
- * picked up without a prompt.
- */
-export async function writeRuntimeFiles(desired: DesiredState): Promise<void> {
-  await writeJsonAtomic(desiredStatePath(), desired);
-  await writeJsonAtomic(routesPath(), desired.routes);
-}
+export { writeRuntimeFiles };
 
 /** The core sequence, shared by every mutation and by GET /api/state. */
 export async function sync(options: ServiceOptions = {}): Promise<{
@@ -155,6 +182,11 @@ export async function sync(options: ServiceOptions = {}): Promise<{
 
 export async function getState(options: ServiceOptions = {}): Promise<StateSnapshot> {
   const { config, desired, system, report } = await sync(options);
+  // A poll settles an in-flight run and reports where things stand. It can never queue:
+  // status() has no path to the request file.
+  const scheduler = schedulerFor(options);
+  scheduler.setEnabled(config.autoApply);
+  const autoApply = await scheduler.status();
   return {
     config,
     desired,
@@ -168,6 +200,7 @@ export async function getState(options: ServiceOptions = {}): Promise<StateSnaps
     },
     httpsSupportedForAliases: false,
     configDir: configDir(),
+    autoApply,
   };
 }
 
@@ -202,6 +235,8 @@ export async function getAliasView(id: string, options: ServiceOptions = {}): Pr
 export interface AliasResult {
   alias: AliasView;
   sync: SyncReport;
+  /** What the automatic apply did about this mutation, if anything. */
+  autoApply: AutoApplyStatus;
 }
 
 /** JSON bodies arrive untyped; ports from HTML forms arrive as strings. */
@@ -236,10 +271,12 @@ export async function createAliasAndSync(
       `All ${POOL_SIZE} loopback addresses are in use. Delete an alias before adding another.`,
     );
   }
+  // The alias is persisted here, BEFORE anything privileged is even considered. A prompt
+  // the user dismisses, or one that fails, can therefore never lose it.
   const alias = await createAlias(toCreateInput(body));
   const { config: next, report } = await sync(options);
   const [view] = await viewsFor([alias], next, options);
-  return { alias: view!, sync: report };
+  return { alias: view!, sync: report, autoApply: await afterMutation(next, report, options) };
 }
 
 export async function updateAliasAndSync(
@@ -251,17 +288,17 @@ export async function updateAliasAndSync(
   const alias = await updateAlias(id, toUpdateInput(body));
   const { config, report } = await sync(options);
   const [view] = await viewsFor([alias], config, options);
-  return { alias: view!, sync: report };
+  return { alias: view!, sync: report, autoApply: await afterMutation(config, report, options) };
 }
 
 export async function deleteAliasAndSync(
   id: string,
   options: ServiceOptions = {},
-): Promise<{ deleted: string; sync: SyncReport }> {
+): Promise<{ deleted: string; sync: SyncReport; autoApply: AutoApplyStatus }> {
   if ((await getAlias(id)) === null) throw new NotFoundError(`No alias with id "${id}".`);
   await deleteAlias(id);
-  const { report } = await sync(options);
-  return { deleted: id, sync: report };
+  const { config, report } = await sync(options);
+  return { deleted: id, sync: report, autoApply: await afterMutation(config, report, options) };
 }
 
 // --- settings ---------------------------------------------------------------
@@ -271,11 +308,14 @@ export interface SettingsResult {
   sync: SyncReport;
   /** The dashboard binds its port at boot; moving it needs a restart of the app. */
   restartRequired: boolean;
+  autoApply: AutoApplyStatus;
 }
 
 export async function getSettings(options: ServiceOptions = {}): Promise<SettingsResult> {
   const { config, report } = await sync(options);
-  return { config, sync: report, restartRequired: false };
+  const scheduler = schedulerFor(options);
+  scheduler.setEnabled(config.autoApply);
+  return { config, sync: report, restartRequired: false, autoApply: await scheduler.status() };
 }
 
 export async function updateSettingsAndSync(
@@ -290,13 +330,19 @@ export async function updateSettingsAndSync(
       typeof body.dashboardPort === "string" ? Number(body.dashboardPort) : (body.dashboardPort as number);
   }
   if (body.https !== undefined) patch.https = body.https as boolean;
+  if (body.autoApply !== undefined) patch.autoApply = body.autoApply as boolean;
   if (Object.keys(patch).length === 0) {
-    throw invalid("body", "Nothing to update. Send tld, dashboardPort or https.");
+    throw invalid("body", "Nothing to update. Send tld, dashboardPort, https or autoApply.");
   }
 
   const config = await updateSettings(patch);
   const { report } = await sync(options);
-  return { config, sync: report, restartRequired: config.dashboardPort !== before.dashboardPort };
+  return {
+    config,
+    sync: report,
+    restartRequired: config.dashboardPort !== before.dashboardPort,
+    autoApply: await afterMutation(config, report, options),
+  };
 }
 
 // --- projects ---------------------------------------------------------------
@@ -349,6 +395,7 @@ export interface LinkProjectResult {
   /** Path of the workspace file written, when the caller asked for one. */
   workspaceFile: string | null;
   sync: SyncReport;
+  autoApply: AutoApplyStatus;
 }
 
 /**
@@ -435,6 +482,7 @@ export async function linkProject(
     updated: all.filter((a) => updatedIds.includes(a.id)),
     workspaceFile,
     sync: report,
+    autoApply: await afterMutation(config, report, options),
   };
 }
 

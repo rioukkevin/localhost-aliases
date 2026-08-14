@@ -95,6 +95,11 @@ function normalizeConfig(parsed: unknown): { config: Config; changed: boolean } 
   if (dashboardPort !== raw.dashboardPort) changed = true;
   const https = typeof raw.https === "boolean" ? raw.https : DEFAULT_CONFIG.https;
   if (https !== raw.https) changed = true;
+  // A config written before autoApply existed has no such field, and a MISSING field is
+  // not `false`: only an explicit `false` turns automatic apply off. Anything else, including
+  // a non-boolean somebody hand-edited in, reads as the default (true).
+  const autoApply = typeof raw.autoApply === "boolean" ? raw.autoApply : DEFAULT_CONFIG.autoApply;
+  if (autoApply !== raw.autoApply) changed = true;
   if (raw.version !== 2) changed = true;
 
   const taken = new Set<string>();
@@ -133,7 +138,7 @@ function normalizeConfig(parsed: unknown): { config: Config; changed: boolean } 
     }
   }
 
-  return { config: { version: 2, tld, dashboardPort, https, aliases }, changed };
+  return { config: { version: 2, tld, dashboardPort, https, autoApply, aliases }, changed };
 }
 
 // --- io ---------------------------------------------------------------------
@@ -282,7 +287,7 @@ export async function deleteAlias(id: string): Promise<void> {
   });
 }
 
-export type SettingsPatch = Partial<Pick<Config, "tld" | "dashboardPort" | "https">>;
+export type SettingsPatch = Partial<Pick<Config, "tld" | "dashboardPort" | "https" | "autoApply">>;
 
 export async function updateSettings(patch: SettingsPatch): Promise<Config> {
   return mutate((config) => {
@@ -299,6 +304,12 @@ export async function updateSettings(patch: SettingsPatch): Promise<Config> {
         throw new ValidationError([{ field: "https", message: "https must be true or false." }]);
       }
       config.https = patch.https;
+    }
+    if (patch.autoApply !== undefined) {
+      if (typeof patch.autoApply !== "boolean") {
+        throw new ValidationError([{ field: "autoApply", message: "autoApply must be true or false." }]);
+      }
+      config.autoApply = patch.autoApply;
     }
     const reserved = config.aliases.find((a) => a.reserved);
     if (reserved) reserved.port = config.dashboardPort;

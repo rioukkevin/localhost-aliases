@@ -85,7 +85,7 @@ describe("probeAll", () => {
 });
 
 describe("toView", () => {
-  const config: Config = { version: 2, tld: "local", dashboardPort: 7788, https: true, aliases: [] };
+  const config: Config = { version: 2, tld: "local", dashboardPort: 7788, https: true, autoApply: true, aliases: [] };
   const alias: Alias = {
     id: "a",
     name: "myapp",

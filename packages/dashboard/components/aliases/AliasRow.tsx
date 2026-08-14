@@ -11,12 +11,18 @@ import { IconExternal, IconPencil, IconTrash, IconUnlink } from "../ui/Icons.tsx
 import { PatchCable } from "../ui/PatchCable.tsx";
 import { StatusDot } from "../ui/StatusDot.tsx";
 import { AliasEditor } from "./AliasEditor.tsx";
+import { applyChip, isLive, type AliasApply } from "./alias-apply.ts";
 
 export interface AliasRowProps {
   alias: AliasView;
   aliases: readonly AliasView[];
   tld: string;
   editing: boolean;
+  /**
+   * Whether this name actually resolves on this Mac yet, and if not, why not. Passed in
+   * rather than read here so the row stays a function of what it is given.
+   */
+  apply?: AliasApply;
   /** Hides the second line's folder path — the drawer already names the folder. */
   hideProjectPath?: boolean;
   onEdit: (id: string | null) => void;
@@ -43,6 +49,7 @@ export function AliasRow({
   aliases,
   tld,
   editing,
+  apply = "unknown",
   hideProjectPath = false,
   onEdit,
   onSave,
@@ -52,6 +59,10 @@ export function AliasRow({
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const pending = isPending(alias);
+  const chip = applyChip(apply);
+  // The cable is the picture of the whole path working, so it may not drift until the
+  // path exists. A dev server answering on :3000 does not make an unapplied name resolve.
+  const live = isLive(apply);
 
   async function save(input: CreateAliasInput) {
     setBusy(true);
@@ -107,10 +118,13 @@ export function AliasRow({
             {alias.name}
             <span className="text-faint">.{tld}</span>
           </span>
-          {alias.reserved ? (
-            <Chip tone="accent">dashboard</Chip>
-          ) : pending ? (
-            <Chip tone="muted">applying</Chip>
+          {alias.reserved ? <Chip tone="accent">dashboard</Chip> : null}
+          {chip ? (
+            <span title={chip.title} data-testid="alias-apply" data-apply={apply}>
+              <Chip tone={apply === "saving" ? "muted" : "down"} dot={apply !== "saving"}>
+                {chip.label}
+              </Chip>
+            </span>
           ) : null}
         </p>
         <p className="mono mt-0.5 truncate text-[11px] text-faint">
@@ -120,7 +134,7 @@ export function AliasRow({
       </div>
 
       <div className="order-4 basis-full pl-[1.9rem] @xl:order-3 @xl:basis-0 @xl:flex-1 @xl:pl-0">
-        <PatchCable status={alias.status} />
+        <PatchCable status={live ? alias.status : "unknown"} />
       </div>
 
       <p className="mono order-5 w-[4.5rem] text-right text-[17px] text-ink @xl:order-4">

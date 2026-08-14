@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useStatus } from "../../lib/client/status-store.ts";
 import { StatusDetail } from "./StatusDetail.tsx";
+import { readApply, readAutoApply } from "./auto-apply-read.ts";
 import { LAMP, readInstall, readTray, type Reading } from "./status-read.ts";
 
 function Lamp({ reading }: { reading: Reading }) {
@@ -31,10 +32,14 @@ function Gauge({ label, reading }: { label: string; reading: Reading }) {
 /**
  * The instrument lamp, bottom right, on every view.
  *
- * Two readings, never conflated: whether the menu-bar app is answering, and whether
- * this Mac actually matches your aliases. Both say "checking…" until the first poll
- * has come back — the previous shell asserted "the menu-bar app is not running" on
+ * Two permanent readings, never conflated: whether the menu-bar app is answering, and
+ * whether this Mac actually matches your aliases. Both say "checking…" until the first
+ * poll has come back — the previous shell asserted "the menu-bar app is not running" on
  * every page load, which was a claim about the machine made before asking it.
+ *
+ * A third appears only while an automatic apply is in flight or stuck, because a
+ * permanent "auto-apply: idle" lamp would be three words of chrome saying nothing
+ * happened. Its detail panel carries the one button that gets a dismissed prompt back.
  */
 export function StatusIndicator() {
   const state = useStatus();
@@ -44,6 +49,7 @@ export function StatusIndicator() {
 
   const tray = readTray(state);
   const install = readInstall(state);
+  const apply = readApply(readAutoApply(state));
 
   useEffect(() => {
     if (!open) return;
@@ -86,7 +92,13 @@ export function StatusIndicator() {
         data-testid="status-indicator"
         aria-expanded={open}
         aria-haspopup="dialog"
-        aria-label={`Menu-bar app ${tray.value}, installation ${install.value}`}
+        aria-label={[
+          `Menu-bar app ${tray.value}`,
+          `installation ${install.value}`,
+          apply ? `automatic apply ${apply.value}` : null,
+        ]
+          .filter(Boolean)
+          .join(", ")}
         onClick={() => setOpen((was) => !was)}
         className={[
           "flex h-8 select-none items-center gap-2.5 rounded-[2px] border px-2.5",
@@ -97,6 +109,14 @@ export function StatusIndicator() {
         <Gauge label="tray" reading={tray} />
         <span aria-hidden="true" className="h-3 w-px bg-hairline-strong" />
         <Gauge label="state" reading={install} />
+        {apply ? (
+          <>
+            <span aria-hidden="true" className="h-3 w-px bg-hairline-strong" />
+            <span data-testid="apply-gauge" data-phase={apply.phase}>
+              <Gauge label="apply" reading={apply} />
+            </span>
+          </>
+        ) : null}
       </button>
     </div>
   );

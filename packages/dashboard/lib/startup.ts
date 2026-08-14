@@ -15,7 +15,9 @@ export async function reconcileDashboardPort(): Promise<void> {
     if (config.dashboardPort === bound) return;
 
     console.log(`[startup] bound :${bound} but config says :${config.dashboardPort} — correcting config`);
-    await updateSettingsAndSync({ dashboardPort: bound });
+    // userInitiated: false — nobody asked for this, so it must never raise an admin prompt.
+    // Startup reconciliation and reboot drift surface the banner and wait for the user.
+    await updateSettingsAndSync({ dashboardPort: bound }, { userInitiated: false });
   } catch (error) {
     console.error(`[startup] could not reconcile the dashboard port: ${String(error)}`);
   }

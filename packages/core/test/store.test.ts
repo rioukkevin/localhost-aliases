@@ -39,6 +39,7 @@ describe("seeding", () => {
     expect(config.tld).toBe(DEFAULT_CONFIG.tld);
     expect(config.dashboardPort).toBe(DEFAULT_CONFIG.dashboardPort);
     expect(config.https).toBe(DEFAULT_CONFIG.https);
+    expect(config.autoApply).toBe(true);
     expect(config.aliases).toHaveLength(1);
 
     const index = config.aliases[0]!;
@@ -74,6 +75,43 @@ describe("seeding", () => {
     const index = config.aliases.find((a) => a.reserved)!;
     expect(index.ip).toBe("127.0.0.3");
     expect(config.aliases.find((a) => a.name === "myapp")!.ip).toBe("127.0.0.2");
+  });
+});
+
+describe("autoApply", () => {
+  test("a config written before the field existed reads as true, not false", async () => {
+    // Exactly what is on an existing user's disk today: no autoApply key at all.
+    await writeFile(
+      configPath(),
+      JSON.stringify({ version: 2, tld: "local", dashboardPort: 7788, https: false, aliases: [] }),
+    );
+    expect((await loadConfig()).autoApply).toBe(true);
+    // and the field is written back, so it is visible in the file from then on.
+    expect((await raw()).autoApply).toBe(true);
+  });
+
+  test("an explicit false is honoured and survives a reload", async () => {
+    await writeFile(
+      configPath(),
+      JSON.stringify({ ...DEFAULT_CONFIG, autoApply: false, aliases: [] }),
+    );
+    expect((await loadConfig()).autoApply).toBe(false);
+    expect((await loadConfig()).autoApply).toBe(false);
+  });
+
+  test("a non-boolean is not a false: it falls back to the default", async () => {
+    await writeFile(
+      configPath(),
+      JSON.stringify({ ...DEFAULT_CONFIG, autoApply: "no", aliases: [] }),
+    );
+    expect((await loadConfig()).autoApply).toBe(true);
+  });
+
+  test("updateSettings toggles it and rejects a non-boolean", async () => {
+    expect((await updateSettings({ autoApply: false })).autoApply).toBe(false);
+    expect((await raw()).autoApply).toBe(false);
+    expect((await updateSettings({ autoApply: true })).autoApply).toBe(true);
+    await expect(updateSettings({ autoApply: "yes" as unknown as boolean })).rejects.toThrow(ValidationError);
   });
 });
 

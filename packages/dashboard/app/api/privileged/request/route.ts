@@ -1,4 +1,5 @@
 import { isPrivilegedKind, isTrayAlive, requestPrivileged } from "../../../../lib/privileged-channel.ts";
+import { autoApplyScheduler } from "../../../../lib/auto-apply-runtime.ts";
 import { invalid, problem, readJson, route } from "../../../../lib/http.ts";
 
 export const dynamic = "force-dynamic";
@@ -22,5 +23,10 @@ export const POST = route(async (request: Request) => {
     );
   }
 
-  return { request: await requestPrivileged(kind), trayAlive: true };
+  const queued = await requestPrivileged(kind);
+  // An explicit click is a user action, so it clears a deferred or failed state and takes
+  // over as the run in flight. Automatic apply then reports on this request rather than
+  // scheduling a competing one.
+  const autoApply = await autoApplyScheduler().noteExplicitRequest(queued);
+  return { request: queued, trayAlive: true, autoApply };
 });

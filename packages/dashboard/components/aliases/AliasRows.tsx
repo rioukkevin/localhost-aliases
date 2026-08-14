@@ -2,6 +2,7 @@
 
 import type { AliasView, CreateAliasInput } from "@localhost-aliases/core/types";
 import { AliasRow } from "./AliasRow.tsx";
+import type { AliasApply } from "./alias-apply.ts";
 
 export interface AliasRowsProps {
   /** The rows to draw. */
@@ -10,6 +11,8 @@ export interface AliasRowsProps {
   aliases: readonly AliasView[];
   tld: string;
   editingId: string | null;
+  /** Whether each name resolves on this Mac yet. Omitted, rows assert nothing. */
+  applyOf?: (alias: AliasView) => AliasApply;
   /** The "Port" legend strip. Off inside the drawer, where the rack label says it. */
   legend?: boolean;
   hideProjectPath?: boolean;
@@ -29,6 +32,7 @@ export function AliasRows({
   aliases,
   tld,
   editingId,
+  applyOf,
   legend = false,
   hideProjectPath = false,
   onEdit,
@@ -61,6 +65,7 @@ export function AliasRows({
             aliases={aliases}
             tld={tld}
             editing={editingId === alias.id}
+            apply={applyOf ? applyOf(alias) : "unknown"}
             hideProjectPath={hideProjectPath}
             onEdit={onEdit}
             onSave={onSave}

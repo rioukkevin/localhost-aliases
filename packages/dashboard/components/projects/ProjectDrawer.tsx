@@ -8,6 +8,7 @@ import { countLabel, tildePath } from "../../lib/client/format.ts";
 import { refreshStatus } from "../../lib/client/status-store.ts";
 import { AliasEditor } from "../aliases/AliasEditor.tsx";
 import { AliasRows } from "../aliases/AliasRows.tsx";
+import { useAliasApply } from "../aliases/alias-apply.ts";
 import { useAliasActions } from "../aliases/useAliasActions.ts";
 import { Button } from "../ui/Button.tsx";
 import { Chip } from "../ui/Chip.tsx";
@@ -41,6 +42,7 @@ export function ProjectDrawer({
   writing,
 }: ProjectDrawerProps) {
   const actions = useAliasActions();
+  const applyOf = useAliasApply();
   const toast = useToast();
 
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -125,6 +127,7 @@ export function ProjectDrawer({
                 aliases={aliases}
                 tld={tld}
                 editingId={editingId}
+                applyOf={applyOf}
                 hideProjectPath
                 onEdit={setEditingId}
                 onSave={(id, input) => actions.update(id, input).catch(() => {})}

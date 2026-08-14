@@ -36,6 +36,15 @@ export interface Config {
   dashboardPort: number;
   /** TLS for the dashboard only. Project aliases can never be https in v2. */
   https: boolean;
+  /**
+   * Apply automatically after a mutation that needs root, so adding an alias raises the
+   * one admin prompt without a second click. Default true; a config written before this
+   * field existed reads as true, because a MISSING field is not `false`.
+   *
+   * When false the product behaves exactly as it did before: the desired state is written
+   * and the user clicks "Prepare and apply" themselves.
+   */
+  autoApply: boolean;
   aliases: Alias[];
 }
 
@@ -44,6 +53,7 @@ export const DEFAULT_CONFIG: Omit<Config, "aliases"> = {
   tld: "local",
   dashboardPort: 7788,
   https: false,
+  autoApply: true,
 };
 
 /** The built-in alias that serves the dashboard itself. */
