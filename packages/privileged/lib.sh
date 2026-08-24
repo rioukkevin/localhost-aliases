@@ -16,6 +16,7 @@ LA_IFCONFIG="${LA_IFCONFIG:-/sbin/ifconfig}"
 LA_DSCACHEUTIL="${LA_DSCACHEUTIL:-/usr/bin/dscacheutil}"
 LA_KILLALL="${LA_KILLALL:-/usr/bin/killall}"
 LA_PLUTIL="${LA_PLUTIL:-/usr/bin/plutil}"
+LA_CHOWN="${LA_CHOWN:-/usr/sbin/chown}"
 
 # Loopback pool. 127.0.0.1 is the real loopback and is never ours.
 LA_POOL_START=2
@@ -53,12 +54,21 @@ la_trap_err() {
   exit "$code"
 }
 
+# Root creating the log directory inside the user's own config dir is how
+# ~/.config/localhost-aliases/logs/privileged.log ended up root:wheel — and how an
+# unprivileged `rm -rf ~/.config/localhost-aliases` later died with "Permission denied",
+# taking the rest of the uninstall down with it. Whoever creates a root-owned file owns
+# handing it back, so the chown happens HERE, at the point of creation, where it cannot
+# be forgotten by a caller.
 la_open_log() {
   mkdir -p "$1" 2>/dev/null || true
   if [ -d "$1" ]; then
     LA_LOGFILE="$1/privileged.log"
     : >>"$LA_LOGFILE" 2>/dev/null || LA_LOGFILE=""
   fi
+  la_chown_owner "$1"
+  [ -n "$LA_LOGFILE" ] && la_chown_owner "$LA_LOGFILE"
+  return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -296,7 +306,37 @@ la_chown_owner() {
   [ -n "${LA_OWNER:-}" ] || return 0
   [[ "$LA_OWNER" =~ ^[0-9]+:[0-9]+$ ]] || return 0
   [ -e "$1" ] || return 0
-  chown "$LA_OWNER" "$1" 2>/dev/null || true
+  "$LA_CHOWN" "$LA_OWNER" "$1" 2>/dev/null || true
+  return 0
+}
+
+# The same, for a whole directory root has been writing into. This is the last thing the
+# privileged half does before it goes away: anything it created must be deletable by the
+# user afterwards, because the user is who deletes it.
+#
+# `chown -R` on BSD does not traverse symlinks (-P is the default), so a link planted inside
+# the config directory cannot redirect this at /etc.
+la_chown_owner_tree() {
+  [ -n "${LA_OWNER:-}" ] || return 0
+  [[ "$LA_OWNER" =~ ^[0-9]+:[0-9]+$ ]] || return 0
+  local path="${1%/}"
+  [ -n "$path" ] || return 0
+  # Root walking a whole tree is worth one more guard: LA_CONFIG_DIR arrives from the
+  # environment, and `chown -R` over $HOME would be a mess to explain and worse to undo.
+  # Mirrors never_ours() in teardown.sh, which refuses the same paths for `rm -rf`.
+  case "$path" in
+    /|/bin|/sbin|/usr|/etc|/var|/tmp|/opt|/dev|/cores|/Users|/Volumes \
+    |/Applications|/Library|/System|/private|/private/tmp|/private/var \
+    |"${HOME%/}"|"${HOME%/}"/.config|"${HOME%/}"/Library|"${HOME%/}"/Library/Logs)
+      la_log "refusing to chown ${path}: that is never this app's directory"
+      return 0 ;;
+  esac
+  case "${HOME%/}/" in "$path"/*) la_log "refusing to chown ${path}"; return 0 ;; esac
+  [ -d "$path" ] || return 0
+  "$LA_CHOWN" -R "$LA_OWNER" "$path" 2>/dev/null \
+    && la_log "handed ${path} back to ${LA_OWNER}" \
+    || la_log "could not chown ${path} to ${LA_OWNER} (continuing)"
+  return 0
 }
 
 la_require_root() {

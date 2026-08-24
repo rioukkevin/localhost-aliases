@@ -8,6 +8,11 @@ import Foundation
 //  (see MenuBuilder.Action and AppDelegate.reapply / AppDelegate.uninstall).
 //  There is no timer, no launch-time call, and no retry loop pointing at it.
 //
+//  `runTeardown(...)` is the second entrypoint. It does NOT run with administrator
+//  privileges: it starts the shipped teardown.sh as this user, and that script raises the one
+//  prompt itself for the one step that needs root. Same rule — an explicit action, behind a
+//  confirmation that lists what is about to be removed.
+//
 //  Everything privileged happens in ONE batch inside packages/privileged (docs/V2.md):
 //  lo0 aliases, the /etc/hosts managed block, the DNS flush, and starting the forwarder.
 //  This file only chooses the entrypoint and raises the macOS prompt.
@@ -72,6 +77,84 @@ enum PrivilegedApply {
             log.log("privileged: finished ok=\(result.ok) cancelled=\(result.cancelled)")
             DispatchQueue.main.async { completion(result) }
         }
+    }
+
+    // MARK: - The full uninstall
+
+    /// Runs `teardown.sh` — the WHOLE uninstall, the same file `make uninstall` runs, shipped
+    /// inside the bundle so none of this needs a source tree.
+    ///
+    /// It is not launched with administrator privileges: it runs as the user and raises the
+    /// one admin prompt itself, for the one step that needs root. Everything after that step
+    /// is the user's own files and needs no password.
+    ///
+    /// What is built here — the argv, the environment, the parsing of the report — lives in
+    /// Uninstaller.swift and is unit-tested. This function is only the Process.
+    static func runTeardown(
+        layout: RuntimeLayout,
+        appBundle: String?,
+        waitPid: Int32?,
+        log: Logger,
+        completion: @escaping (Uninstaller.Report, Result) -> Void
+    ) {
+        let command = Uninstaller.command(
+            privilegedDir: layout.privilegedDir,
+            configDir: Paths.configDir,
+            logDir: Paths.logDir,
+            appBundle: appBundle,
+            forwarder: layout.forwarder,
+            waitPid: waitPid,
+            managedIps: managedIps())
+
+        if isDisabled {
+            log.log("uninstall: refused — LA_NO_PRIVILEGED is set")
+            let result = Result(ok: false, cancelled: false, output: "LA_NO_PRIVILEGED is set")
+            completion(Uninstaller.parse(""), result)
+            return
+        }
+        guard FileManager.default.fileExists(atPath: command.arguments[0]) else {
+            let message = "teardown.sh is missing at \(command.arguments[0])"
+            log.log("uninstall: \(message)")
+            completion(Uninstaller.parse(""), Result(ok: false, cancelled: false, output: message))
+            return
+        }
+
+        log.log("uninstall: running \(command.arguments[0]) app=\(appBundle ?? "none") pid=\(waitPid.map(String.init) ?? "none")")
+        DispatchQueue.global().async {
+            let outcome = executeTeardown(command)
+            let report = Uninstaller.parse(outcome.output)
+            log.log("uninstall: \(report.outcome.rawValue) app=\(report.app) steps=\(report.steps.map { "\($0.name)=\($0.status.rawValue)" }.joined(separator: " "))")
+            DispatchQueue.main.async { completion(report, outcome) }
+        }
+    }
+
+    /// Its own runner rather than `execute`: teardown.sh needs an environment, and its exit
+    /// code carries three outcomes (0 done, 1 partial, 2 cancelled) instead of two.
+    private static func executeTeardown(_ command: Uninstaller.Command) -> Result {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: command.executable)
+        task.arguments = command.arguments
+        // Inherit, then override: the script needs a real PATH, HOME and TMPDIR.
+        var environment = ProcessInfo.processInfo.environment
+        for (key, value) in command.environment { environment[key] = value }
+        task.environment = environment
+
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = pipe
+        do {
+            try task.run()
+        } catch {
+            return Result(ok: false, cancelled: false, output: error.localizedDescription)
+        }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        task.waitUntilExit()
+        let output = String(data: data, encoding: .utf8) ?? ""
+        // 2 is the script's own code for "the user dismissed the password dialog".
+        return Result(
+            ok: task.terminationStatus == 0,
+            cancelled: task.terminationStatus == 2,
+            output: output)
     }
 
     // MARK: - Command construction

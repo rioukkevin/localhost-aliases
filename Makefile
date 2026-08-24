@@ -14,6 +14,7 @@ help:
 	@echo "  make notarize   Notarize + staple (needs NOTARY_ARGS)"
 	@echo "  make install    Copy the built app into /Applications"
 	@echo "  make uninstall  Remove the app and every change it made (one admin prompt)"
+	@echo "                  Delegates to the same teardown.sh the app itself runs"
 
 test:
 	@$(BUN) test packages

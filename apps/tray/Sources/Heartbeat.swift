@@ -35,8 +35,15 @@ final class Heartbeat {
         log.log("heartbeat: stopped, liveness file removed")
     }
 
+    /// Touches the file, but never CREATES the directory it lives in.
+    ///
+    /// It used to. That made the heartbeat able to resurrect ~/.config/localhost-aliases a
+    /// second after the uninstall removed it, leaving a directory behind on a machine the user
+    /// had just cleaned. The dashboard creates the config directory when it writes config.json,
+    /// which is long before any root agent exists to watch this file — so nothing is lost by
+    /// declining to create it here, and a removed directory stays removed.
     private func touch() {
-        Paths.ensureDirectory(Paths.configDir)
+        guard FileManager.default.fileExists(atPath: Paths.configDir) else { return }
         let stamp = ISO8601DateFormatter().string(from: Date())
         // Rewriting the file updates both its contents and its mtime, so the forwarder can
         // use whichever it prefers.

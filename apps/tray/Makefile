@@ -26,8 +26,10 @@ SOURCES   := $(wildcard Sources/*.swift)
 # Both are injected into the code below as closures, so every decision is still exercised.
 TEST_SOURCES := Sources/Paths.swift Sources/Logger.swift Sources/ApplyRequestWatcher.swift \
 	Sources/TerminationCoordinator.swift Sources/AgentSupervisor.swift Sources/LoginItem.swift \
+	Sources/AppConfig.swift Sources/AliasMenuList.swift Sources/RuntimeLayout.swift \
+	Sources/Uninstaller.swift \
 	tests/main.swift tests/TerminationTests.swift tests/AgentTests.swift \
-	tests/LoginItemTests.swift
+	tests/LoginItemTests.swift tests/MenuTests.swift tests/UninstallTests.swift
 
 SWIFTFLAGS := -O -wmo \
 	-target arm64-apple-macos$(DEPLOY) \

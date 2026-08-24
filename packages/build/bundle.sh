@@ -10,7 +10,9 @@
 #       ├── dashboard/              next standalone output (+ .next/static, + public)
 #       ├── forwarder               bun --compile, runs as root
 #       ├── mcp                     bun --compile, stdio MCP server
-#       └── privileged/apply.sh     the one privileged entrypoint
+#       └── privileged/             apply.sh (the one privileged entrypoint), uninstall.sh,
+#                                   lib.sh, and teardown.sh + self-delete.sh, which let the
+#                                   installed app uninstall itself without any source tree
 #
 # The Swift tray and its Info.plist come from apps/tray's own Makefile.
 #
@@ -70,7 +72,10 @@ PRIV_SRC="$ROOT/packages/privileged"
 # themselves and abort if it is missing.
 find "$PRIV_SRC" -maxdepth 1 -type f -name '*.sh' -exec cp {} "$RES/privileged/" \;
 chmod +x "$RES"/privileged/*.sh
-for required in apply.sh lib.sh uninstall.sh; do
+# teardown.sh and self-delete.sh are what make an uninstall possible with no checkout on the
+# machine — the whole point of shipping them. A bundle without them can tear down the system
+# changes but can never remove itself.
+for required in apply.sh lib.sh uninstall.sh teardown.sh self-delete.sh; do
   [ -f "$RES/privileged/$required" ] || die "packages/privileged/$required is missing"
 done
 info "$(ls "$RES/privileged" | tr '\n' ' ')"

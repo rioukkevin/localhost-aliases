@@ -143,10 +143,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MenuAc
                 PrivilegedRunOutcome(
                     ok: true, cancelled: false, output: AgentSupervisor.reconciledMessage))
         case .needsPrompt:
-            // No agent (or an uninstall): this is the one prompt, and the request the user just
-            // made is the reason for it. It counts as this session's ask.
+            // An uninstall is not an apply with a different flag: it is the whole teardown,
+            // it ends with this app deleting itself, and it must be confirmed in the app that
+            // does it. So the channel is answered NOW — "we have taken over" — and the
+            // confirmation, the prompt and the report all happen here.
+            //
+            // Answering first also keeps the config directory clean: a result written after
+            // the teardown would recreate ~/.config/localhost-aliases seconds after removing it.
+            if kind == .uninstall {
+                log.log("apply-watcher: uninstall requested from the dashboard — confirming in the app")
+                completion(
+                    PrivilegedRunOutcome(
+                        ok: true, cancelled: false,
+                        output: "The menu-bar app is asking you to confirm the uninstall."))
+                uninstallEverything(nil)
+                return
+            }
+            // No agent: this is the one prompt, and the request the user just made is the
+            // reason for it. It counts as this session's ask.
             state.agentPromptRaised = true
-            runPrivileged(kind == .uninstall ? .uninstall : .apply) { result in
+            runPrivileged(.apply) { result in
                 completion(
                     PrivilegedRunOutcome(
                         ok: result.ok, cancelled: result.cancelled, output: result.output))
@@ -302,17 +318,73 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MenuAc
         open(urlString: LoginItemState.systemSettingsURL)
     }
 
-    /// Privileged action #2 of 2. See PrivilegedApply.swift.
+    /// Privileged action #2 of 2, and the only one that ends with this app deleting itself.
+    ///
+    /// The whole teardown lives in the shipped teardown.sh — the same file `make uninstall`
+    /// runs — so this works on a machine with no source code on it, which is the point.
+    /// Reachable from the menu item and from the dashboard's settings drawer; both land here,
+    /// so there is exactly one confirmation and one report however it was started.
     func uninstallEverything(_ sender: Any?) {
+        guard !state.privilegedBusy else {
+            log.log("uninstall: ignored — a privileged run is already on screen")
+            return
+        }
         let confirmed = confirm(
-            title: "Remove every change this app made?",
-            body: "The forwarder stops, the lo0 addresses and the /etc/hosts block are removed, "
-                + "DNS is flushed and your aliases are deleted. "
-                + "macOS will ask for your administrator password once.",
+            title: Uninstaller.confirmTitle,
+            body: Uninstaller.confirmBody(aliasCount: state.config.projectAliases.count),
             action: "Uninstall",
             destructive: true)
         guard confirmed else { return }
-        runPrivileged(.uninstall)
+        runUninstall()
+    }
+
+    /// Order matters here. The dashboard is the process that writes into
+    /// ~/.config/localhost-aliases, so it is stopped BEFORE the directory is removed —
+    /// otherwise it recreates the files a second after the uninstall deleted them. If the
+    /// password prompt is dismissed, nothing was removed and it is simply started again.
+    private func runUninstall() {
+        state.privilegedBusy = true
+        state.lastMessage = "Uninstalling…"
+        applyWatcher?.stop()
+        loginItemWatcher?.stop()
+        poller?.stop()
+        dashboard?.stop()
+
+        PrivilegedApply.runTeardown(
+            layout: layout,
+            appBundle: layout.appBundle,
+            waitPid: getpid(),
+            log: log
+        ) { [weak self] report, result in
+            guard let self else { return }
+            self.state.privilegedBusy = false
+
+            if report.outcome == .cancelled || result.cancelled {
+                self.log.log("uninstall: cancelled at the password prompt — nothing was removed")
+                self.state.lastMessage = "Cancelled — nothing was removed"
+                self.applyWatcher?.start()
+                self.loginItemWatcher?.start()
+                self.poller?.start()
+                self.dashboard?.start(port: self.state.config.dashboardPort)
+                self.refreshIcon()
+                return
+            }
+
+            // Every step's outcome, failures included. A teardown that hides what it could not
+            // do leaves the user believing their machine is clean when it is not.
+            self.presentReport(report)
+            NSApp.terminate(nil)
+        }
+    }
+
+    private func presentReport(_ report: Uninstaller.Report) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = Uninstaller.resultTitle(report)
+        alert.informativeText = Uninstaller.resultBody(report)
+        alert.alertStyle = report.outcome == .ok ? .informational : .warning
+        alert.addButton(withTitle: "Quit")
+        alert.runModal()
     }
 
     func quitApp(_ sender: Any?) {

@@ -22,6 +22,17 @@ struct RuntimeLayout {
     /// Directory holding apply.sh (and, when shipped, prompt.ts).
     var privilegedDir: String { (applyScript as NSString).deletingLastPathComponent }
     var promptScript: String { "\(privilegedDir)/prompt.ts" }
+    /// The whole uninstall, shipped so it works with no checkout on the machine.
+    var teardownScript: String { "\(privilegedDir)/teardown.sh" }
+
+    /// The .app to remove on uninstall — `root` is Contents/Resources, so the bundle is two
+    /// levels up. Nil in dev mode: there is no bundle, and "delete the repo" is not on offer.
+    var appBundle: String? {
+        guard mode == .bundle else { return nil }
+        let contents = (root as NSString).deletingLastPathComponent
+        let bundle = (contents as NSString).deletingLastPathComponent
+        return bundle.hasSuffix(".app") ? bundle : nil
+    }
 
     /// `executablePath` is injectable so the bundle/dev split can be tested without a bundle.
     static func resolve(

@@ -8,16 +8,20 @@
 #   2. remove our 127.0.0.2-254 aliases from lo0
 #   3. strip the managed block from /etc/hosts, leaving the rest byte-for-byte
 #   4. flush DNS
+#   5. hand every file root created in the user's own directories back to the user, so the
+#      unprivileged half of the uninstall can actually delete them
 #
 # It deletes nothing else. Not the config file, not the app, not a single line of
-# /etc/hosts outside the markers — the unprivileged uninstaller removes
-# ~/.config/localhost-aliases itself, because nothing there needs root.
+# /etc/hosts outside the markers — teardown.sh removes ~/.config/localhost-aliases, the CA
+# and the app itself, because none of that needs root.
 #
 # Environment:
 #   LA_CONFIG_DIR   required
 #   LA_FORWARDER    optional; without it the pid cannot be verified, so nothing is signalled
 #   LA_HOSTS_PATH   default /etc/hosts
 #   LA_LOG_DIR      default $LA_CONFIG_DIR/logs
+#   LA_OWNER        "uid:gid" of the invoking user. Without it step 5 cannot hand anything
+#                   back and the user is left with root-owned files they cannot delete.
 #   LA_MANAGED_IPS  optional space-separated allow-list restricting lo0 removals further
 
 set -Eeuo pipefail
@@ -105,6 +109,19 @@ fi
 # ---------------------------------------------------------------------------
 LA_STEP="dns"
 la_flush_dns
+
+# ---------------------------------------------------------------------------
+# 5. Hand back everything root created in the user's own directories
+# ---------------------------------------------------------------------------
+# This step exists because of a real failure: the log directory and privileged.log were
+# created here as root inside ~/.config/localhost-aliases, and the unprivileged cleanup that
+# runs next died on them —
+#     rm: ~/.config/localhost-aliases/logs/privileged.log: Permission denied
+# — which aborted the whole uninstall before it could remove the app. Root is the only
+# process that can fix that, and this is its last chance to.
+LA_STEP="reclaim"
+la_chown_owner_tree "$LA_CONFIG_DIR"
+[ "$LOG_DIR" = "${LA_CONFIG_DIR}/logs" ] || la_chown_owner_tree "$LOG_DIR"
 
 LA_STEP="done"
 la_log "uninstall.sh finished: -${IPS_REMOVED} lo0, hosts ${HOSTS_CHANGED}, forwarder ${FORWARDER_STATE}"

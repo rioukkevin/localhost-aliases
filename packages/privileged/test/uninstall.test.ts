@@ -1,5 +1,5 @@
 import { describe, expect, test, afterEach } from "bun:test";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { HOSTS_BEGIN, HOSTS_END } from "@localhost-aliases/core/types";
 import { APPLY, STATE_TWO, SYSTEM_HOSTS, UNINSTALL, killSandboxProcesses, makeSandbox, run, type Sandbox } from "./helpers.ts";
@@ -104,6 +104,42 @@ describe("uninstall.sh", () => {
     await uninstall(s);
     expect(readFileSync(config, "utf8")).toBe('{"version":2}');
     expect(existsSync(join(s.configDir, "hosts.original"))).toBe(true);
+  });
+
+  // The reported failure, at its source:
+  //     rm: ~/.config/localhost-aliases/logs/privileged.log: Permission denied
+  // Root created logs/ and privileged.log inside the user's own config directory, and the
+  // unprivileged cleanup that runs next could not delete them — which aborted the whole
+  // uninstall before it ever reached the app. Root is the only process that can fix that.
+  test("hands everything it created in the user's directories back to the user", async () => {
+    const s = sandbox();
+    const chownLog = join(s.root, "chown.calls");
+    const chown = join(s.binDir, "chown");
+    writeFileSync(chown, `#!/bin/bash\nprintf '%s\\n' "$*" >> '${chownLog}'\nexit 0\n`);
+    chmodSync(chown, 0o755);
+
+    await uninstall(s, { LA_CHOWN: chown, LA_OWNER: "501:20" });
+
+    const calls = readFileSync(chownLog, "utf8").split("\n").filter(Boolean);
+    // At creation, so no caller can forget it…
+    expect(calls).toContain(`501:20 ${s.logDir}`);
+    expect(calls).toContain(`501:20 ${s.logDir}/privileged.log`);
+    // …and once more over the whole tree, on the way out, for anything else root touched.
+    expect(calls).toContain(`-R 501:20 ${s.configDir}`);
+    expect(calls).toContain(`-R 501:20 ${s.logDir}`);
+  });
+
+  test("chowns nothing when it was not told who the user is", async () => {
+    const s = sandbox();
+    const chownLog = join(s.root, "chown.calls");
+    const chown = join(s.binDir, "chown");
+    writeFileSync(chown, `#!/bin/bash\nprintf '%s\\n' "$*" >> '${chownLog}'\nexit 0\n`);
+    chmodSync(chown, 0o755);
+
+    const r = await uninstall(s, { LA_CHOWN: chown });
+
+    expect(r.summary.status).toBe("ok");
+    expect(existsSync(chownLog)).toBe(false);
   });
 
   test("takes no arguments", async () => {

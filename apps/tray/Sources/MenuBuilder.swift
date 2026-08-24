@@ -37,16 +37,16 @@ enum MenuBuilder {
         menu.addItem(open)
 
         menu.addItem(.separator())
-        menu.addItem(header("Aliases"))
+        menu.addItem(header("Live aliases"))
 
-        let aliases = state.config.projectAliases
-        if aliases.isEmpty {
-            menu.addItem(caption("No aliases yet — add one in the dashboard"))
-        } else {
-            for alias in aliases {
-                menu.addItem(aliasItem(alias, state: state, target: target))
-            }
+        // Only what is answering right now, plus the dashboard's own alias. The rule, the
+        // wording and the reasoning all live in AliasMenuList, which is pure and tested.
+        let list = AliasMenuList.build(aliases: state.config.aliases, up: state.aliasUp)
+        for alias in list.shown {
+            menu.addItem(aliasItem(alias, state: state, target: target))
         }
+        if let text = list.caption { menu.addItem(caption(text)) }
+        if let note = list.hiddenNote { menu.addItem(caption(note)) }
         menu.addItem(caption("http:// only — raw TCP forwarding can't terminate TLS"))
 
         menu.addItem(.separator())

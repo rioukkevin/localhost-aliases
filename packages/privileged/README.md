@@ -189,10 +189,60 @@ heartbeat file too, so it stops even in the case where it cannot be signalled.
 
 ## Undoing everything
 
-`uninstall.sh` reverses all of it in one pass, behind the same single prompt: stop the
-forwarder, remove our `lo0` addresses, strip the managed block out of `/etc/hosts`, flush
-DNS. It deletes the forwarder's status and heartbeat files, and nothing else — not your
-config, not your original-hosts copy, not the app.
+`teardown.sh` is the whole uninstall, and it is shipped inside the app — which is the point:
+removing this app must not require a copy of its source code. `make uninstall` runs the same
+file. It is **not** privileged; it raises the one prompt for the one step that needs root, and
+does the rest as you:
+
+1. **`uninstall.sh` as root** (the single prompt): stop the agent, remove our `lo0`
+   addresses, strip the managed block out of `/etc/hosts`, flush DNS, and hand back every file
+   root created in your own directories.
+2. the local CA in your **login keychain**, matched by SHA-1 fingerprint — never by name,
+   because deleting the wrong certificate is unrecoverable;
+3. `~/.config/localhost-aliases`;
+4. `~/Library/Logs/localhost-aliases`;
+5. the `.app` itself, through `self-delete.sh`.
+
+**Every step reports and continues.** A step that fails is named in the report and the steps
+after it still run. That is not a preference: a run that stopped at step 3 on a root-owned
+`logs/privileged.log` left a user with an app that had already dismantled its own system state
+and could no longer remove itself. The one thing that does stop the sequence is *cancelling*
+the password prompt, which removes nothing at all.
+
+Step 1 is why `LA_OWNER` matters. Root writes `logs/privileged.log` inside your config
+directory; without being told who you are it leaves that file `root:wheel` and step 3 cannot
+delete it. `uninstall.sh` now chowns what it creates as it creates it, and sweeps the whole
+config and log directory back to you before it gives up root.
+
+`self-delete.sh` exists because a running app cannot reliably delete its own bundle. It is
+copied to a scratch directory *outside* the bundle, spawned detached, waits for the app's pid
+to exit, and then removes the bundle. It refuses any path that is not our bundle: absolute, no
+`..`, named `LocalhostAliases.app`, containing `Contents/MacOS/LocalhostAliases`, and with our
+bundle id in its `Info.plist`. `/Applications` and `~/Applications` both satisfy that; nothing
+else does by accident. The wait is bounded, so it never lingers.
+
+Steps 3 and 4 apply the same suspicion to the directories they delete. `LA_CONFIG_DIR` and
+`LA_LOG_DIR` are honoured all the way down — `paths.ts` reads them, `Paths.swift` mirrors them,
+`make uninstall` asks `paths.ts` — so a stale `export LA_CONFIG_DIR=…` in a shell would pick
+the argument to `rm -rf`. `never_ours()` refuses `/`, the system directories, `$HOME`, anything
+containing `$HOME`, and the obvious homes of other people's data (`~/.config`, `~/Library`,
+`~/Library/Logs`, `~/Desktop`, …). Everything *below* those is still fair game, which is why
+`~/.config/localhost-aliases` is removed and `~/.config` is not. A refusal is a failed step, so
+the app is still removed afterwards.
+
+`make uninstall` also asks whether anything is installed at all before it runs any of this: the
+app, `~/.config/localhost-aliases`, the log directory, the managed `/etc/hosts` block, and any
+`127.0.0.2-254` on `lo0`. All five are readable without root. If none of them is there it says
+"nothing to uninstall" and stops — no password prompt, no deletions. It used to prompt, revert
+nothing, and delete the log directory anyway.
+
+Run `teardown.sh --dry-run` to print every command it would run, fully expanded, and execute
+none of them. `make uninstall` removes `dist/` afterwards — a build artifact of your checkout,
+not something `teardown.sh` knows about — but not after a dry run and not after a cancelled
+prompt, because those removed nothing.
+
+`uninstall.sh` on its own still deletes nothing outside the system state — not your config,
+not your original-hosts copy, not the app. Those belong to you, and none of them needs root.
 
 By hand, without this project, it is:
 
@@ -220,7 +270,9 @@ The last line is the honest check: it prints the one root process, or nothing at
 | File | Runs as | What it is |
 |---|---|---|
 | `apply.sh` | root | The single privileged entrypoint. |
-| `uninstall.sh` | root | The exact reverse. |
+| `uninstall.sh` | root | The exact reverse of the *system* changes, and nothing else. |
+| `teardown.sh` | you | The whole uninstall, in order, reporting every step and continuing past a failure. Raises the one prompt for `uninstall.sh`. `--dry-run` prints and runs nothing. |
+| `self-delete.sh` | you | Removes the `.app` from outside itself, after the app's pid is gone. Refuses anything that is not our bundle. |
 | `lib.sh` | root | Shared helpers: validation, the `/etc/hosts` transform, `lo0`, DNS, the forwarder. **Must be shipped in the same directory as the two scripts**; they refuse to run without it. |
 | `prompt.ts` | you | The `osascript` wrapper. The only place a password is ever requested. `--if-needed` skips the prompt entirely when the agent is already running. |
 
@@ -239,13 +291,23 @@ builds this:
 | `LA_OWNER` | no | `uid:gid`; files root creates in your directories are handed back to you. |
 | `LA_MANAGED_IPS` | no | Space-separated allow-list narrowing which `lo0` addresses may be removed. |
 
+`teardown.sh` adds four of its own, and always fills in `LA_OWNER` for the privileged half:
+
+| Variable | Required | Meaning |
+|---|---|---|
+| `LA_APP_BUNDLE` | no | The `.app` to remove. Unset means the app is left alone. |
+| `LA_WAIT_PID` | no | The pid to outlive before the bundle is removed — the running app itself. |
+| `LA_LOG_DIR` | no | Removed as step 4, so the app leaves no log directory behind either. |
+| `LA_KEYCHAIN` | no (`~/Library/Keychains/login.keychain-db`) | Where the local CA is trusted. |
+
 `LA_CONFIG_DIR`, `LA_HOSTS_PATH` and `LA_MANAGED_IPS` are re-exported by `apply.sh` to the
 agent it starts, so the long-lived root process is bound by the same three answers the
 one-shot script was. The agent reconciles only when it is really root; `LA_AGENT_RECONCILE=0`
 turns that off and leaves a plain forwarder, and `=1` forces it on for development against a
 temp hosts file.
 
-`LA_IFCONFIG`, `LA_DSCACHEUTIL`, `LA_KILLALL`, `LA_PLUTIL` and `LA_TEST_MODE` exist so the
+`LA_IFCONFIG`, `LA_DSCACHEUTIL`, `LA_KILLALL`, `LA_PLUTIL`, `LA_CHOWN`, `LA_OSASCRIPT`,
+`LA_SECURITY`, `LA_OPENSSL` and `LA_TEST_MODE` exist so the
 unit tests can drive the scripts against stubs and a temp hosts file. They default to the
 absolute system paths, and the tests are the only thing that ever sets them: no test may
 touch the real `/etc/hosts`, the real `lo0` or run a real privileged command.
