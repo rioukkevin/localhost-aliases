@@ -54,8 +54,8 @@ describe("observe", () => {
 
     expect(observation.loopbackIps).toEqual(["127.0.0.1", "127.0.0.2", "127.0.0.3"]);
     expect(observation.hostsEntries).toEqual([
-      { ip: "127.0.0.2", hostname: "index.local" },
-      { ip: "127.0.0.3", hostname: "shop.local" },
+      { ip: "127.0.0.2", hostname: "index.test" },
+      { ip: "127.0.0.3", hostname: "shop.test" },
     ]);
     expect(observation.forwarder?.routes).toHaveLength(2);
     expect(observation.staleStatus).toBe(false);
@@ -81,10 +81,10 @@ describe("observe", () => {
   test("the default hosts probe reads LA_HOSTS_PATH, never /etc/hosts directly", async () => {
     await writeFile(
       box.hostsPath,
-      "# >>> localhost-aliases >>>\n127.0.0.9\tfake.local\n# <<< localhost-aliases <<<\n",
+      "# >>> localhost-aliases >>>\n127.0.0.9\tfake.test\n# <<< localhost-aliases <<<\n",
     );
     const text = await defaultProbes.hostsFile();
-    expect(text).toContain("fake.local");
+    expect(text).toContain("fake.test");
   });
 });
 
@@ -104,7 +104,7 @@ describe("compare", () => {
     expect(live.system.applied).toBe(true);
     expect(live.system.drift).toEqual([]);
     expect(live.diff.needsPrompt).toBe(false);
-    expect(live.system.managedHosts).toEqual(["index.local", "shop.local"]);
+    expect(live.system.managedHosts).toEqual(["index.test", "shop.test"]);
   });
 
   test("missing lo0 addresses need the admin prompt", async () => {
@@ -135,14 +135,14 @@ describe("compare", () => {
 
   test("a hosts line pointing at the wrong IP is reported, which core alone cannot see", async () => {
     const d = desired();
-    const wrong = d.hosts.map((h) => (h.hostname === "shop.local" ? { ...h, ip: "127.0.0.9" } : h));
+    const wrong = d.hosts.map((h) => (h.hostname === "shop.test" ? { ...h, ip: "127.0.0.9" } : h));
     const live = await readSystemState(
       d,
       stubProbes({ loopbackIps: d.loopbackIps, hosts: wrong, forwarder: forwarderFor(d) }),
     );
 
     expect(live.diff.needsPrompt).toBe(true);
-    expect(live.diff.privileged).toContain("/etc/hosts points shop.local at 127.0.0.9, expected 127.0.0.3.");
+    expect(live.diff.privileged).toContain("/etc/hosts points shop.test at 127.0.0.9, expected 127.0.0.3.");
   });
 
   test("a stale status file is named in the drift, not just 'not running'", async () => {

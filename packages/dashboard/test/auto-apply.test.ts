@@ -410,7 +410,7 @@ describe("service: mutations", () => {
     const h = harness();
     const { alias, autoApply } = await createAliasAndSync({ name: "shop", port: 3000 }, opts(h));
 
-    expect(alias.hostname).toBe("shop.local");
+    expect(alias.hostname).toBe("shop.test");
     expect(autoApply.state).toBe("scheduled");
     expect(h.queued).toHaveLength(0);
 
@@ -477,7 +477,7 @@ describe("service: mutations", () => {
       hostname: string;
       targetPort: number;
     }>;
-    expect(routes.find((r) => r.hostname === "shop.local")?.targetPort).toBe(4100);
+    expect(routes.find((r) => r.hostname === "shop.test")?.targetPort).toBe(4100);
   });
 
   test("renaming an alias does need root, and schedules", async () => {

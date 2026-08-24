@@ -49,7 +49,7 @@ verify_dashboard() {
   log="$(mktemp -t la-dashboard)"
   # The dashboard writes config/desired-state/routes on boot and reconciles config.dashboardPort
   # to whatever port it bound. Without an isolated config dir a BUILD would overwrite the user's
-  # real settings with this throwaway port, and index.local would then forward nowhere.
+  # real settings with this throwaway port, and index.test would then forward nowhere.
   probe_dir="$(mktemp -d -t la-verify)"
 
   PORT="$port" HOSTNAME=127.0.0.1 NODE_ENV=production \

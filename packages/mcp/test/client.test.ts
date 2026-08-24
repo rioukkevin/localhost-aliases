@@ -12,12 +12,12 @@ function client(routes: Parameters<typeof stubFetch>[0]) {
 describe("DashboardClient", () => {
   test("unwraps the documented envelope", async () => {
     const { client: c } = client({ "GET /api/aliases": { body: { aliases: [alias()] } } });
-    expect((await c.listAliases()).map((a) => a.hostname)).toEqual(["myapp.local"]);
+    expect((await c.listAliases()).map((a) => a.hostname)).toEqual(["myapp.test"]);
   });
 
   test("also accepts a bare array", async () => {
     const { client: c } = client({ "GET /api/aliases": { body: [alias({ name: "web" })] } });
-    expect((await c.listAliases())[0]?.hostname).toBe("web.local");
+    expect((await c.listAliases())[0]?.hostname).toBe("web.test");
   });
 
   test("returns an empty list when the shape is unrecognised", async () => {

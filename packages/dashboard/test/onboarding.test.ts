@@ -30,11 +30,20 @@ describe("getOnboarding", () => {
     await createAliasAndSync({ name: "shop", port: 3000 }, bare);
     const state = await getOnboarding(bare);
 
-    expect(state.changes.join(" ")).toContain("127.0.0.3 shop.local");
+    expect(state.changes.join(" ")).toContain("127.0.0.3 shop.test");
     expect(state.changes.join(" ")).toContain("Add 2 loopback addresses to lo0");
     expect(state.changes.join(" ")).toContain("Nothing is installed permanently");
     expect(state.command).toContain("apply.sh");
-    expect(state.verifyUrl).toBe("http://index.local");
+    expect(state.verifyUrl).toBe("http://index.test");
+  });
+
+  test("the explain step says the default is .test, and why .local is not offered", async () => {
+    const state = await getOnboarding(bare);
+
+    expect(state.naming).toContain(".test");
+    expect(state.naming).toContain("RFC 6761");
+    expect(state.naming).toContain(".local is deliberately not offered");
+    expect(state.naming).toContain("5 seconds");
   });
 
   test("the apply step only reports done when the machine really matches", async () => {

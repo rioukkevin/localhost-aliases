@@ -6,6 +6,10 @@ import { heroAssets } from "./hero-assets.ts";
  *   video present  -> autoplaying loop, with the still swapped in under reduced motion
  *   still only     -> the still
  *   nothing        -> the static patchbay figure, which says the same thing in markup
+ *
+ * The descriptions quote the hostname the render actually shows (`shop.test`, from
+ * packages/assets/src/hero/script.ts). If the render changes TLD, these change with it — alt
+ * text naming a suffix the app refuses would teach a name that cannot be created.
  */
 export function HeroMedia() {
   const { webm, mp4, poster, still } = heroAssets();
@@ -19,7 +23,7 @@ export function HeroMedia() {
     return (
       <img
         src={still}
-        alt="shop.local patched by a live cable to the dev server on port 3000"
+        alt="shop.test patched by a live cable to the dev server on port 3000"
         className="block w-full border border-hairline"
       />
     );
@@ -35,7 +39,7 @@ export function HeroMedia() {
         playsInline
         preload="metadata"
         poster={poster ?? undefined}
-        aria-label="localhost:3000 becoming shop.local, then a patch cable connecting it to the running server"
+        aria-label="localhost:3000 becoming shop.test, then a patch cable connecting it to the running server"
       >
         {webm ? <source src={webm} type="video/webm" /> : null}
         {mp4 ? <source src={mp4} type="video/mp4" /> : null}
@@ -46,7 +50,7 @@ export function HeroMedia() {
         <picture className="reduced-only">
           <img
             src={still}
-            alt="shop.local patched by a live cable to the dev server on port 3000"
+            alt="shop.test patched by a live cable to the dev server on port 3000"
             className="block w-full border border-hairline"
           />
         </picture>

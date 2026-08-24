@@ -18,8 +18,8 @@ describe("list_aliases", () => {
       "GET /api/aliases": { body: { aliases: [alias({ status: "up", description: "the api" })] } },
     });
     const out = body(await tools.listAliases(client));
-    expect(out).toContain("myapp.local");
-    expect(out).toContain("http://myapp.local -> 127.0.0.1:3000");
+    expect(out).toContain("myapp.test");
+    expect(out).toContain("http://myapp.test -> 127.0.0.1:3000");
     expect(out).toContain("ip=127.0.0.2");
     expect(out).toContain("status=up");
     expect(out).toContain("the api");
@@ -60,7 +60,7 @@ describe("list_projects", () => {
     const out = body(await tools.listProjects(client));
     expect(out).toContain("/Users/dev/app");
     expect(out).toContain(".localhost-aliases.json");
-    expect(out).toContain("myapp.local -> 127.0.0.1:3000 (up)");
+    expect(out).toContain("myapp.test -> 127.0.0.1:3000 (up)");
   });
 
   test("explains the empty case", async () => {
@@ -81,7 +81,7 @@ describe("create_alias", () => {
     });
     const out = body(await tools.createAlias(client, { name: "api", port: 4000, description: "d" }));
     expect(requests[0]?.body).toEqual({ name: "api", port: 4000, projectPath: null, description: "d" });
-    expect(out).toContain("Created api.local -> 127.0.0.1:4000 on 127.0.0.3");
+    expect(out).toContain("Created api.test -> 127.0.0.1:4000 on 127.0.0.3");
     expect(out).toContain("http only");
     expect(out).toContain("one macOS admin prompt");
     expect(out).toContain("add 127.0.0.3 to lo0");
@@ -117,13 +117,13 @@ describe("delete_alias", () => {
   const listing = { body: { aliases: [alias({ id: "a1" }), alias({ id: "a2", name: "index", reserved: true })] } };
 
   test("resolves by bare name, hostname and id", async () => {
-    for (const ref of ["myapp", "myapp.local", "MyApp.Local", "a1"]) {
+    for (const ref of ["myapp", "myapp.test", "MyApp.Test", "a1"]) {
       const { client, requests } = setup({
         "GET /api/aliases": listing,
         "DELETE /api/aliases/a1": { body: { deleted: "a1", sync: { applied: true, needsPrompt: false, privileged: [] } } },
       });
       const out = body(await tools.deleteAlias(client, { alias: ref }));
-      expect(out).toContain("Deleted myapp.local");
+      expect(out).toContain("Deleted myapp.test");
       expect(requests.at(-1)?.path).toBe("/api/aliases/a1");
     }
   });
@@ -140,7 +140,7 @@ describe("delete_alias", () => {
     const { client } = setup({ "GET /api/aliases": listing });
     const result = await tools.deleteAlias(client, { alias: "ghost" });
     expect(result.isError).toBe(true);
-    expect(body(result)).toContain("myapp.local, index.local");
+    expect(body(result)).toContain("myapp.test, index.test");
   });
 });
 
@@ -166,7 +166,7 @@ describe("link_project", () => {
       body: { path: "/Users/dev/app", aliasIds: ["a1"], importWorkspace: true, writeWorkspaceFile: false },
     });
     expect(out).toContain("/Users/dev/app");
-    expect(out).toContain("http://myapp.local -> 127.0.0.1:3000");
+    expect(out).toContain("http://myapp.test -> 127.0.0.1:3000");
   });
 
   test("works with no alias at all — importing what the folder declares", async () => {
@@ -179,7 +179,7 @@ describe("link_project", () => {
     const out = body(await tools.linkProject(client, { projectPath: "/Users/dev/app" }));
     expect(requests[0]?.body).toMatchObject({ aliasIds: [] });
     expect(out).toContain("Imported 1 alias(es) declared in .localhost-aliases.json");
-    expect(out).toContain("web.local");
+    expect(out).toContain("web.test");
   });
 
   test("reports the workspace file it wrote", async () => {
@@ -232,6 +232,6 @@ describe("aliases resource", () => {
   test("is the alias list as JSON", async () => {
     const { client } = setup({ "GET /api/aliases": { body: { aliases: [alias()] } } });
     const parsed = JSON.parse(await tools.aliasesResource(client)) as { aliases: Array<{ url: string }> };
-    expect(parsed.aliases[0]?.url).toBe("http://myapp.local");
+    expect(parsed.aliases[0]?.url).toBe("http://myapp.test");
   });
 });

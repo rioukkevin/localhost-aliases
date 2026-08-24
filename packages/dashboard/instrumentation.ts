@@ -3,7 +3,7 @@
  *
  * The tray launches us with LA_DASHBOARD_PORT taken from config.dashboardPort, so the two
  * normally agree. They can diverge if that port was occupied and the launcher picked another:
- * config would still claim the old one, and the `index.local` route — which forwards to
+ * config would still claim the old one, and the `index.test` route — which forwards to
  * config.dashboardPort — would point at nothing. So the port we actually bound wins, and the
  * config is corrected to match reality.
  *

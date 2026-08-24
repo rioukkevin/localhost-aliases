@@ -33,13 +33,13 @@ function alias(partial: Partial<AliasView> & { name: string; port: number }): Al
     reserved: partial.reserved ?? false,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
-    hostname: `${partial.name}.local`,
-    url: `http://${partial.name}.local`,
+    hostname: `${partial.name}.test`,
+    url: `http://${partial.name}.test`,
     status: partial.status ?? "unknown",
   };
 }
 
-const ctx = (aliases: AliasView[] = []) => ({ aliases, tld: "local" });
+const ctx = (aliases: AliasView[] = []) => ({ aliases, tld: "test" });
 
 describe("alias name validation", () => {
   test("accepts a plain label and a dotted one", () => {
@@ -81,7 +81,7 @@ describe("port validation", () => {
     const existing = [alias({ name: "myapp", port: 3000 })];
     const issues = validateAliasForm({ name: "other", port: "3000" }, ctx(existing));
     expect(issues.port).toBeNull();
-    expect(issues.portWarning).toMatch(/myapp\.local already forwards/);
+    expect(issues.portWarning).toMatch(/myapp\.test already forwards/);
   });
 
   test("the dashboard's own port must stay unprivileged", () => {
@@ -92,9 +92,9 @@ describe("port validation", () => {
 
 describe("tld and path helpers", () => {
   test("tld rules", () => {
-    expect(validateTld("local")).toBeNull();
-    expect(validateTld(".local")).toMatch(/leading dot/);
-    expect(validateTld("LOCAL")).toMatch(/lowercase/);
+    expect(validateTld("test")).toBeNull();
+    expect(validateTld(".test")).toMatch(/leading dot/);
+    expect(validateTld("TEST")).toMatch(/lowercase/);
   });
 
   test("absolute paths only", () => {
@@ -118,10 +118,10 @@ describe("tld and path helpers", () => {
 
 describe("the optimistic row", () => {
   test("is marked pending and carries the hostname the server will produce", () => {
-    const row = pendingAlias({ name: "myapp", port: 3000 }, "local");
+    const row = pendingAlias({ name: "myapp", port: 3000 }, "test");
     expect(isPending(row)).toBe(true);
-    expect(row.hostname).toBe("myapp.local");
-    expect(row.url).toBe("http://myapp.local");
+    expect(row.hostname).toBe("myapp.test");
+    expect(row.url).toBe("http://myapp.test");
     expect(row.status).toBe("unknown");
   });
 });
@@ -129,7 +129,7 @@ describe("the optimistic row", () => {
 // --- the shared store -------------------------------------------------------
 
 const payload = {
-  config: { version: 2, tld: "local", dashboardPort: 7788, https: false, aliases: [] },
+  config: { version: 2, tld: "test", dashboardPort: 7788, https: false, aliases: [] },
   aliases: [alias({ name: "myapp", port: 3000 })],
   system: { loopbackIps: [], managedHosts: [], forwarder: null, applied: false, drift: [] },
   sync: { applied: false, needsPrompt: true, drift: [], privileged: [], unprivileged: [], intent: {} },

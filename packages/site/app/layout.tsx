@@ -7,7 +7,7 @@ import "./globals.css";
 
 const TITLE = "Localhost Aliases";
 const DESCRIPTION =
-  "Real hostnames for the dev servers already running on your Mac. http://myapp.local instead of http://localhost:3000 — one admin prompt, nothing permanently installed.";
+  "Real hostnames for the dev servers already running on your Mac. http://myapp.test instead of http://localhost:3000 — one admin prompt, nothing permanently installed.";
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl()),

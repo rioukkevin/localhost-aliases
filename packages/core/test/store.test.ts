@@ -83,7 +83,7 @@ describe("autoApply", () => {
     // Exactly what is on an existing user's disk today: no autoApply key at all.
     await writeFile(
       configPath(),
-      JSON.stringify({ version: 2, tld: "local", dashboardPort: 7788, https: false, aliases: [] }),
+      JSON.stringify({ version: 2, tld: "test", dashboardPort: 7788, https: false, aliases: [] }),
     );
     expect((await loadConfig()).autoApply).toBe(true);
     // and the field is written back, so it is visible in the file from then on.
@@ -137,7 +137,7 @@ describe("corrupt config", () => {
       }),
     );
     const config = await loadConfig();
-    expect(config.tld).toBe("local");
+    expect(config.tld).toBe("test");
     expect(config.dashboardPort).toBe(7788);
     expect(config.aliases.map((a) => a.name).sort()).toEqual(["index", "ok"]);
     // repaired on disk, not just in memory

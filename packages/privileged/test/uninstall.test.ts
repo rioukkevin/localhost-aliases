@@ -91,7 +91,7 @@ describe("uninstall.sh", () => {
   test("keeps hand-written lines and only strips the markers", async () => {
     const s = sandbox();
     const tail = "10.1.2.3\tstaging.internal\n";
-    writeFileSync(s.hostsPath, `${SYSTEM_HOSTS}${HOSTS_BEGIN}\n127.0.0.2\ta.local\n${HOSTS_END}\n${tail}`);
+    writeFileSync(s.hostsPath, `${SYSTEM_HOSTS}${HOSTS_BEGIN}\n127.0.0.2\ta.test\n${HOSTS_END}\n${tail}`);
     await uninstall(s);
     expect(s.hosts()).toBe(`${SYSTEM_HOSTS}${tail}`);
   });

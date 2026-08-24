@@ -267,7 +267,7 @@ The rack header repeats `w-[4.5rem]` and `w-[11rem]` spacers so the "Port" legen
 above the port column. `AliasMini` is the read-only version of the same row at 15px with a
 narrower action cluster (`w-[4.25rem]`, or `w-[6.5rem]` with detach).
 
-Empty-state figure: a literal demo cable — `myapp` + `.local` in faint, a `size="figure"`
+Empty-state figure: a literal demo cable — `myapp` + `.test` in faint, a `size="figure"`
 cable at `status="up"`, then `:3000`.
 
 ## 5. Primitives
@@ -315,7 +315,7 @@ Props: `label` (required), `hint?: ReactNode`, `error?: string | null`,
   and the input itself carries `focus-visible:outline-none`.
 - Input: `mono min-w-0 flex-1 bg-transparent px-2.5 text-[15px] text-ink placeholder:text-faint`.
 - Prefix/suffix: `mono … text-[15px] text-faint`, `aria-hidden` (e.g. `:` before a port,
-  `.local` after a name).
+  `.test` after a name).
 - One message slot, precedence `error ?? warning ?? hint`, `text-[11px] leading-snug`,
   coloured `text-danger` / `text-down` / `text-faint`; `role="alert"` and `aria-invalid` only
   for errors; wired with `aria-describedby`.
@@ -466,7 +466,7 @@ Four readings — `helper`, `scheme`, `tld`, `aliases`. Each is
 (`mono text-[12px] text-ink`) baseline-aligned, with an optional 1.5px lamp
 (`live: bg-live` + `dot-live`, `down: bg-down`, `faint: bg-faint`).
 Values: helper = `running` / `stopped` / `not installed` / `unreachable` / `…`;
-scheme = `http:PORT` or `https:PORT`; tld = `.local`; aliases = count. `…` while unloaded.
+scheme = `http:PORT` or `https:PORT`; tld = `.test`; aliases = count. `…` while unloaded.
 
 ### Icons (`Icons.tsx`)
 No icon library. Every icon shares one wrapper: 16×16, `viewBox="0 0 16 16"`, `fill="none"`,

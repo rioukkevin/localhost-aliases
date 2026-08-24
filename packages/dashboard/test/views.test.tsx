@@ -24,8 +24,8 @@ function alias(over: Partial<AliasView> & { name: string; port: number }): Alias
     reserved: false,
     createdAt: now,
     updatedAt: now,
-    hostname: `${over.name}.local`,
-    url: `http://${over.name}.local`,
+    hostname: `${over.name}.test`,
+    url: `http://${over.name}.test`,
     status: "up",
     ...over,
   };
@@ -134,10 +134,10 @@ describe("project drawer", () => {
 
   test("carries every per-alias action plus add, attach and the workspace file", () => {
     expect(open).toContain("Copy URL");
-    expect(open).toContain("Open shop.local");
-    expect(open).toContain("Edit shop.local");
-    expect(open).toContain("Delete shop.local");
-    expect(open).toContain("Detach shop.local from its folder");
+    expect(open).toContain("Open shop.test");
+    expect(open).toContain("Edit shop.test");
+    expect(open).toContain("Delete shop.test");
+    expect(open).toContain("Detach shop.test from its folder");
     expect(open).toContain("Patch it here");
     expect(open).toContain("Attach an existing alias");
     expect(open).toContain("Rewrite file");
@@ -156,15 +156,15 @@ describe("unassigned list", () => {
     expect(html).toContain('data-testid="alias-row"');
     expect(html).toContain("loose-one");
     // The project's alias belongs to the drawer, not here.
-    expect(html).not.toContain("shop.local");
+    expect(html).not.toContain("shop.test");
   });
 
   test("the reserved dashboard row is visibly special and has no delete", () => {
     expect(html).toContain('data-testid="reserved-section"');
     expect(html).toContain("reserved — it cannot be renamed or deleted");
-    expect(html).toContain("Delete loose-one.local");
-    expect(html).not.toContain("Delete index.local");
-    expect(html).not.toContain("Edit index.local");
+    expect(html).toContain("Delete loose-one.test");
+    expect(html).not.toContain("Delete index.test");
+    expect(html).not.toContain("Edit index.test");
   });
 
   test("carries an inline create form", () => {

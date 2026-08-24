@@ -5,6 +5,10 @@
  * splices <ip>:80 to 127.0.0.1:<port>. Nothing parses HTTP, so WebSockets and any other
  * protocol pass through untouched — and we cannot terminate TLS for project aliases.
  */
+import { DEFAULT_TLD } from "./tld.ts";
+
+/** Which suffixes an alias may end in, and why the broken ones are refused. */
+export * from "./tld.ts";
 
 // ---------------------------------------------------------------------------
 // Domain
@@ -30,7 +34,7 @@ export interface Alias {
 
 export interface Config {
   version: 2;
-  /** TLD appended to every alias name, without the dot. */
+  /** TLD appended to every alias name, without the dot. See tld.ts for what is refused. */
   tld: string;
   /** Port the embedded dashboard binds on 127.0.0.1. */
   dashboardPort: number;
@@ -50,7 +54,7 @@ export interface Config {
 
 export const DEFAULT_CONFIG: Omit<Config, "aliases"> = {
   version: 2,
-  tld: "local",
+  tld: DEFAULT_TLD,
   dashboardPort: 7788,
   https: false,
   autoApply: true,
@@ -70,9 +74,9 @@ export type AliasStatus = "up" | "down" | "unknown";
 
 /** An Alias enriched for display. Never persisted. */
 export interface AliasView extends Alias {
-  /** e.g. "myapp.local" */
+  /** e.g. "myapp.test" */
   hostname: string;
-  /** e.g. "http://myapp.local" */
+  /** e.g. "http://myapp.test" */
   url: string;
   status: AliasStatus;
 }

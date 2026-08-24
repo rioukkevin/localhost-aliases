@@ -39,7 +39,7 @@ export function PatchbayFigure() {
             <span className="flex-1 lg:w-[18rem] lg:flex-none">
               <span className="mono block text-[17px] font-medium leading-tight text-ink md:text-[19px]">
                 {row.name}
-                <span className="text-faint">.local</span>
+                <span className="text-faint">.test</span>
               </span>
               <span className="mono mt-1 block text-[11px] text-faint">
                 {row.ip}:80 → 127.0.0.1:{row.port}

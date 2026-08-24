@@ -91,7 +91,7 @@ export interface StateSnapshot {
   desired: DesiredState;
   system: SystemState;
   sync: SyncReport;
-  /** Dashboard's own hostname, e.g. "index.local". */
+  /** Dashboard's own hostname, e.g. "index.test". */
   dashboardHostname: string;
   capacity: { used: number; total: number; remaining: number };
   /** Raw bytes are forwarded, so TLS can never be terminated for project aliases. */

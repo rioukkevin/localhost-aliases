@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { IP_POOL_END, IP_POOL_START } from "@localhost-aliases/core/types";
+import { DEFAULT_TLD, IP_POOL_END, IP_POOL_START } from "@localhost-aliases/core/types";
 import { UnassignedList } from "../components/aliases/UnassignedList.tsx";
 import { ProjectDrawer } from "../components/projects/ProjectDrawer.tsx";
 import { ProjectGrid } from "../components/projects/ProjectGrid.tsx";
@@ -23,7 +23,7 @@ export default function DashboardPage() {
   const [openPath, setOpenPath] = useState<string | null>(null);
 
   const open = projects.find((p) => p.path === openPath) ?? null;
-  const tld = config?.tld ?? "local";
+  const tld = config?.tld ?? DEFAULT_TLD;
   const full = aliases.length >= POOL_SIZE;
 
   return (

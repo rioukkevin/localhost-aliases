@@ -34,7 +34,7 @@ beforeEach(async () => {
   two = serve("upstream two");
   portA = freePort();
   portB = freePort();
-  await writeRoutes(routesFile, [route(portA, one.port!, "a.local"), route(portB, one.port!, "b.local")]);
+  await writeRoutes(routesFile, [route(portA, one.port!, "a.test"), route(portB, one.port!, "b.test")]);
   forwarder = new Forwarder({ routesFile, statusFile, pollMs: 100, log: () => {} });
   await forwarder.start();
 });
@@ -62,7 +62,7 @@ test("a port-only change retargets without touching the listeners", async () => 
     },
   });
 
-  await writeRoutes(routesFile, [route(portA, two.port!, "a.local"), route(portB, one.port!, "b.local")]);
+  await writeRoutes(routesFile, [route(portA, two.port!, "a.test"), route(portB, one.port!, "b.test")]);
   await waitFor(async () => (await status()).routes.some((r) => r.targetPort === two.port), {
     what: "the reload to land",
   });
@@ -77,7 +77,7 @@ test("a port-only change retargets without touching the listeners", async () => 
 });
 
 test("a removed route stops listening and leaves the others alone", async () => {
-  await writeRoutes(routesFile, [route(portA, one.port!, "a.local")]);
+  await writeRoutes(routesFile, [route(portA, one.port!, "a.test")]);
   await waitFor(async () => (await status()).routes.length === 1, { what: "the route to be dropped" });
 
   expect(await get(portA)).toBe("upstream one");
@@ -87,9 +87,9 @@ test("a removed route stops listening and leaves the others alone", async () => 
 test("a new route is picked up without a restart", async () => {
   const portC = freePort();
   await writeRoutes(routesFile, [
-    route(portA, one.port!, "a.local"),
-    route(portB, one.port!, "b.local"),
-    route(portC, two.port!, "c.local"),
+    route(portA, one.port!, "a.test"),
+    route(portB, one.port!, "b.test"),
+    route(portC, two.port!, "c.test"),
   ]);
   await waitFor(async () => (await status()).routes.length === 3, { what: "the new route to bind" });
   expect(await get(portC)).toBe("upstream two");
@@ -101,22 +101,22 @@ test("a route that cannot bind is reported, and the others keep working", async 
   const squatter = Bun.listen({ hostname: "127.0.0.1", port: taken, socket: { data() {} } });
 
   await writeRoutes(routesFile, [
-    route(portA, one.port!, "a.local"),
-    route(portB, one.port!, "b.local"),
-    route(taken, one.port!, "taken.local"),
+    route(portA, one.port!, "a.test"),
+    route(portB, one.port!, "b.test"),
+    route(taken, one.port!, "taken.test"),
   ]);
   await waitFor(async () => (await status()).failures.length === 1, { what: "the bind failure to be reported" });
 
   const live = await status();
-  expect(live.failures[0]?.route.hostname).toBe("taken.local");
+  expect(live.failures[0]?.route.hostname).toBe("taken.test");
   expect(live.failures[0]?.error).toContain("EADDRINUSE");
-  expect(live.routes.map((r) => r.hostname).sort()).toEqual(["a.local", "b.local"]);
+  expect(live.routes.map((r) => r.hostname).sort()).toEqual(["a.test", "b.test"]);
   expect(await get(portA)).toBe("upstream one"); // one bad route took nothing down
 
   // Nobody edits routes.json when a squatter goes away, so the bind is retried on the poll.
   squatter.stop(true);
   await waitFor(async () => (await status()).failures.length === 0, { what: "the bind to be retried" });
-  expect((await status()).routes.map((r) => r.hostname).sort()).toEqual(["a.local", "b.local", "taken.local"]);
+  expect((await status()).routes.map((r) => r.hostname).sort()).toEqual(["a.test", "b.test", "taken.test"]);
   expect(await get(taken)).toBe("upstream one");
 });
 
@@ -129,7 +129,7 @@ test("an unusable routes file keeps the current routes and says so", async () =>
   expect(live.failures[0]?.error).toContain("not valid JSON");
   expect(await get(portA)).toBe("upstream one");
 
-  await writeRoutes(routesFile, [route(portA, two.port!, "a.local"), route(portB, one.port!, "b.local")]);
+  await writeRoutes(routesFile, [route(portA, two.port!, "a.test"), route(portB, one.port!, "b.test")]);
   await waitFor(async () => (await status()).failures.length === 0, { what: "recovery" });
   expect(await get(portA)).toBe("upstream two");
 });

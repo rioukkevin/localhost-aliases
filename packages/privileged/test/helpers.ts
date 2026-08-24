@@ -179,12 +179,12 @@ function commandOf(pid: number): string | null {
 
 export const STATE_TWO = {
   hosts: [
-    { ip: "127.0.0.2", hostname: "index.local" },
-    { ip: "127.0.0.3", hostname: "myapp.local" },
+    { ip: "127.0.0.2", hostname: "index.test" },
+    { ip: "127.0.0.3", hostname: "myapp.test" },
   ],
   loopbackIps: ["127.0.0.2", "127.0.0.3"],
   routes: [
-    { ip: "127.0.0.2", listenPort: 80, targetPort: 7788, hostname: "index.local" },
-    { ip: "127.0.0.3", listenPort: 80, targetPort: 3000, hostname: "myapp.local" },
+    { ip: "127.0.0.2", listenPort: 80, targetPort: 7788, hostname: "index.test" },
+    { ip: "127.0.0.3", listenPort: 80, targetPort: 3000, hostname: "myapp.test" },
   ],
 };

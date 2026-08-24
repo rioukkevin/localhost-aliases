@@ -100,8 +100,8 @@ const firstRun: DocPage = {
           items: [
             "**What will change on this Mac.** The exact hostnames, loopback addresses and file paths are listed before anything happens. Nothing has run yet.",
             "**Apply to this Mac.** One macOS admin prompt. This is the only step that needs your password.",
-            "**Verify it actually works.** The app fetches `http://index.local` for real and reports what came back, rather than assuming the previous step worked.",
-            "**HTTPS for the dashboard** — optional. Generates a local certificate authority and trusts it in your *login* keychain, so `https://index.local` works. This is for the dashboard alone.",
+            "**Verify it actually works.** The app fetches `http://index.test` for real and reports what came back, rather than assuming the previous step worked.",
+            "**HTTPS for the dashboard** — optional. Generates a local certificate authority and trusts it in your *login* keychain, so `https://index.test` works. This is for the dashboard alone.",
             "**MCP server for your coding agents** — optional. One click installs it into Claude Code or Codex. See [MCP](/docs/mcp).",
           ],
         },
@@ -183,12 +183,12 @@ const howItWorks: DocPage = {
       blocks: [
         {
           kind: "p",
-          text: "DNS maps a name to an IP address and never to a port. That is the whole problem: `myapp.local` can be made to resolve, but it will resolve to `:80`, not to your dev server's `:3000`. So each alias gets its own loopback address, and a small root process carries port 80 on that address to the port your dev server already listens on.",
+          text: "DNS maps a name to an IP address and never to a port. That is the whole problem: `myapp.test` can be made to resolve, but it will resolve to `:80`, not to your dev server's `:3000`. So each alias gets its own loopback address, and a small root process carries port 80 on that address to the port your dev server already listens on.",
         },
         {
           kind: "figure",
           value:
-            "  /etc/hosts     127.0.0.2   myapp.local\n  lo0 alias      127.0.0.2\n  forwarder      127.0.0.2:80  ──raw bytes──▶  127.0.0.1:3000",
+            "  /etc/hosts     127.0.0.2   myapp.test\n  lo0 alias      127.0.0.2\n  forwarder      127.0.0.2:80  ──raw bytes──▶  127.0.0.1:3000",
         },
         {
           kind: "p",
@@ -216,7 +216,7 @@ const howItWorks: DocPage = {
           kind: "note",
           tone: "warn",
           title: "Project aliases are http:// only",
-          text: "We never see the traffic, so we cannot terminate TLS. `https://myapp.local` will not work and cannot be made to work by this design. `https://` is available for the dashboard alone, because that is a server we run ourselves — the optional step in onboarding generates a local CA and trusts it in your login keychain. Firefox uses its own certificate store and is not covered by that.",
+          text: "We never see the traffic, so we cannot terminate TLS. `https://myapp.test` will not work and cannot be made to work by this design. `https://` is available for the dashboard alone, because that is a server we run ourselves — the optional step in onboarding generates a local CA and trusts it in your login keychain. Firefox uses its own certificate store and is not covered by that.",
         },
       ],
     },
@@ -246,7 +246,7 @@ const howItWorks: DocPage = {
           kind: "code",
           label: "/etc/hosts",
           value:
-            "# >>> localhost-aliases >>>\n127.0.0.2\tindex.local\n127.0.0.3\tmyapp.local\n127.0.0.4\tapi.myapp.local\n# <<< localhost-aliases <<<",
+            "# >>> localhost-aliases >>>\n127.0.0.2\tindex.test\n127.0.0.3\tmyapp.test\n127.0.0.4\tapi.myapp.test\n# <<< localhost-aliases <<<",
         },
         {
           kind: "p",
@@ -256,21 +256,56 @@ const howItWorks: DocPage = {
     },
     {
       id: "reserved",
-      title: "index.local, the reserved alias",
+      title: "index.test, the reserved alias",
       blocks: [
         {
           kind: "p",
-          text: "`index.local` is always present and maps to the dashboard itself, so `Open Dashboard` opens a name rather than a port number. It cannot be renamed or deleted from the UI. The dashboard is embedded in the app bundle and listens on `127.0.0.1:7788` by default; it only answers while the app is running.",
+          text: "`index.test` is always present and maps to the dashboard itself, so `Open Dashboard` opens a name rather than a port number. It cannot be renamed or deleted from the UI. The dashboard is embedded in the app bundle and listens on `127.0.0.1:7788` by default; it only answers while the app is running.",
         },
       ],
     },
     {
       id: "tld",
-      title: "About .local",
+      title: "The TLD: .test",
       blocks: [
         {
           kind: "p",
-          text: "`.local` is formally reserved for mDNS/Bonjour. Explicit `/etc/hosts` entries take precedence on macOS, so it works in practice. On a network with heavy Bonjour use you may still see resolution oddities; switch the TLD to `.test` in Settings and everything re-resolves. Changing the TLD renames every hostname, so the next apply needs one admin prompt.",
+          text: "Every alias ends in `.test`. [RFC 6761](https://www.rfc-editor.org/rfc/rfc6761#section-6.2) reserves that suffix for development: it is never delegated to a registry, never publicly resolvable, and nothing on macOS claims it — so the line in `/etc/hosts` is the answer, immediately. Changing the TLD renames every hostname, so the next apply needs one admin prompt.",
+        },
+        {
+          kind: "note",
+          tone: "warn",
+          title: ".local is not supported",
+          text: "`.local` is reserved for multicast DNS by [RFC 6762](https://www.rfc-editor.org/rfc/rfc6762#section-3), and on macOS `mDNSResponder` owns it: a lookup is put to the network as a multicast query and the resolver waits that query out. On the machine this was measured on, that wait is about five seconds per name — the same five seconds whether or not the name is in `/etc/hosts`, which is what proves the suffix is the cost rather than anything the app writes. So `.local` is rejected rather than offered. It is not broken: Bonjour resolves the names it actually owns quickly, which is what it is for. It is the wrong carrier for a name whose answer is a static line in a file.",
+        },
+        {
+          kind: "p",
+          text: "Reproduce it yourself: time `getaddrinfo` for a `.local` name that exists nowhere, and for a `.test` name that exists nowhere. The first waits, the second returns in microseconds.",
+        },
+        {
+          kind: "code",
+          label: "time getaddrinfo",
+          value:
+            "bun -e '\nconst dns = require(\"node:dns\");\nfor (const n of [\"nope-xyz.local\", \"nope-xyz.test\"]) {\n  const t = Bun.nanoseconds();\n  await new Promise((r) => dns.lookup(n, () => r()));\n  console.log(n.padEnd(16), ((Bun.nanoseconds() - t) / 1e9).toFixed(3) + \"s\");\n}'",
+        },
+        {
+          kind: "figure",
+          value: "nope-xyz.local   5.006s\nnope-xyz.test    0.003s",
+          caption: "macOS 26.3, Apple Silicon — neither name is in /etc/hosts",
+        },
+        {
+          kind: "note",
+          tone: "warn",
+          title: "HSTS-preloaded TLDs are rejected too",
+          text: "`.dev`, `.app`, `.page` and the other TLDs on the browsers' [HSTS preload list](https://hstspreload.org) are upgraded from `http://` to `https://` by Chrome and Safari before a request ever leaves the machine. Project aliases are `http://` only — the forwarder never parses the traffic, so nothing can present a certificate — which means an alias under one of those TLDs would fail with a TLS error that says nothing about the real cause. Validation refuses them with that reason instead. The last label is what decides, so `foo.dev` is refused exactly as `dev` is.",
+        },
+        {
+          kind: "p",
+          text: "`.localhost` is refused for a third reason: macOS resolves every name under it to `127.0.0.1` on its own and never reads `/etc/hosts`, so the name would land past the forwarder on a port nothing is listening on.",
+        },
+        {
+          kind: "p",
+          text: "Settings offers `test`, `internal`, `lan`, `home.arpa` and `example` as quick picks, and you can type another. A refused suffix is refused inline, with the specific reason it fails rather than a flat “not allowed”.",
         },
       ],
     },
@@ -423,7 +458,7 @@ const mcp: DocPage = {
         },
         {
           kind: "p",
-          text: "The server is also told, in its own instructions, that project aliases are `http://` only, so your agent should never suggest `https://myapp.local`.",
+          text: "The server is also told, in its own instructions, that project aliases are `http://` only, so your agent should never suggest `https://myapp.test`.",
         },
       ],
     },
@@ -491,7 +526,7 @@ const troubleshooting: DocPage = {
         {
           kind: "steps",
           items: [
-            "**Is the app running?** The forwarder exits by itself when the app stops, so `myapp.local` resolves but nothing answers. Look for the patchbay icon in the menu bar.",
+            "**Is the app running?** The forwarder exits by itself when the app stops, so `myapp.test` resolves but nothing answers. Look for the patchbay icon in the menu bar.",
             "**Is the hosts entry there?** `grep -A20 'localhost-aliases' /etc/hosts` should show your hostname inside the marker block.",
             "**Is the address on lo0?** `ifconfig lo0 | grep 'inet 127.0.0'` should list the alias's address. A reboot clears these; relaunching the app re-adds them behind one prompt.",
             "**Is anything listening on the target port?** `curl -sv http://127.0.0.1:3000` — if that fails, the alias is fine and your dev server is not up.",
@@ -501,7 +536,7 @@ const troubleshooting: DocPage = {
         {
           kind: "code",
           label: "the one-line check",
-          value: "curl -sv http://myapp.local 2>&1 | head -20",
+          value: "curl -sv http://myapp.test 2>&1 | head -20",
         },
       ],
     },
@@ -530,12 +565,24 @@ const troubleshooting: DocPage = {
       ],
     },
     {
-      id: "bonjour",
-      title: ".local behaves oddly on this network",
+      id: "rejected-tld",
+      title: "The TLD I typed was rejected",
       blocks: [
         {
           kind: "p",
-          text: "`.local` belongs to mDNS/Bonjour. Explicit `/etc/hosts` entries win on macOS, but on a network saturated with Bonjour traffic you may still see slow or intermittent resolution. Switch the TLD to `test` in Settings — it is reserved for exactly this by RFC 6761 — and re-apply.",
+          text: "Three families of TLD are refused, each for a specific reason rather than a preference. The default, `.test`, is reserved for development by RFC 6761 and has none of these problems — see [how aliases work](/docs/how-aliases-work#tld).",
+        },
+        {
+          kind: "list",
+          items: [
+            "`.local` — reserved for mDNS/Bonjour, and on macOS `mDNSResponder` owns it. Every lookup waits out a multicast query first: about five seconds per name, whether or not the name is in `/etc/hosts`. A dev URL that takes five seconds to resolve is not usable, so the app does not offer the suffix.",
+            "`.dev`, `.app`, `.page` and the rest of the HSTS preload list — Chrome and Safari rewrite `http://` to `https://` for these before the request leaves the machine. Project aliases are `http://` only, so the browser would show a TLS error instead of your app.",
+            "`.localhost` — macOS answers this suffix itself, always `127.0.0.1`, without reading `/etc/hosts`. Each alias has its own `127.0.0.x`, so the name would never reach it.",
+          ],
+        },
+        {
+          kind: "p",
+          text: "Settings offers `test`, `internal`, `lan`, `home.arpa` and `example`, and accepts anything else that is not on those three lists. Changing the TLD renames every hostname, so the next apply raises the admin prompt once.",
         },
       ],
     },

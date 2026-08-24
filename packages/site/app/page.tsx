@@ -7,7 +7,7 @@ import { Chip } from "../components/ui/Chip.tsx";
 import { LinkButton } from "../components/ui/LinkButton.tsx";
 import { Panel } from "../components/ui/Panel.tsx";
 
-const WIRING = `/etc/hosts      127.0.0.2   myapp.local
+const WIRING = `/etc/hosts      127.0.0.2   myapp.test
 lo0 alias       127.0.0.2
 forwarder       127.0.0.2:80  ──raw bytes──▶  127.0.0.1:3000`;
 
@@ -48,7 +48,7 @@ export default function LandingPage() {
             →
           </span>
           <span className="text-ink">
-            http://myapp<span className="text-faint">.local</span>
+            http://myapp<span className="text-faint">.test</span>
           </span>
         </p>
 
@@ -210,7 +210,7 @@ export default function LandingPage() {
             The forwarder moves raw bytes and never looks inside them. That is exactly why
             WebSockets and HMR need no configuration — and it is also why it cannot terminate TLS:
             nothing in the path ever parses a request, so there is nowhere to present a certificate
-            for <span className="mono">myapp.local</span>. Anything that requires a secure context
+            for <span className="mono">myapp.test</span>. Anything that requires a secure context
             in the browser — service workers, <span className="mono">getUserMedia</span>, WebAuthn —
             still needs <span className="mono">http://localhost</span>, which browsers treat as
             secure.
@@ -220,7 +220,7 @@ export default function LandingPage() {
             server is ours: onboarding can optionally generate a local CA and trust it in your{" "}
             <span className="text-ink">login keychain</span> — a click, not a{" "}
             <span className="mono">sudo</span> command — for{" "}
-            <span className="mono">https://index.local</span>. Firefox keeps its own trust store and
+            <span className="mono">https://index.test</span>. Firefox keeps its own trust store and
             the flow says so.
           </p>
         </Banner>
@@ -298,7 +298,7 @@ export default function LandingPage() {
             <ul className="flex flex-col gap-3 text-[13px] leading-relaxed text-muted">
               <li>
                 The agent can read the aliases and projects on this machine, so it writes{" "}
-                <span className="mono">http://myapp.local</span> in your docs and tests instead of
+                <span className="mono">http://myapp.test</span> in your docs and tests instead of
                 guessing a port.
               </li>
               <li>
@@ -318,7 +318,7 @@ export default function LandingPage() {
         id="requirements"
         eyebrow="before you start"
         title="Requirements"
-        lede="Short list, and one caveat about .local worth reading first."
+        lede="Short list, plus the one thing worth knowing about the TLD before you name anything."
       >
         <FactList
           items={[
@@ -343,14 +343,18 @@ export default function LandingPage() {
               ),
             },
             {
-              term: "A note on .local",
+              term: "Names end in .test",
               detail: (
                 <>
-                  <span className="mono">.local</span> is formally reserved for mDNS/Bonjour.
-                  Explicit <span className="mono">/etc/hosts</span> entries take precedence on
-                  macOS, so it works — but on a network with heavy Bonjour use you can switch the
-                  TLD to <span className="mono">.test</span> in Settings and everything re-resolves
-                  instantly.
+                  <span className="mono">.test</span> is reserved for development by RFC 6761:
+                  never delegated, never publicly resolvable, and claimed by nothing on macOS, so
+                  the <span className="mono">/etc/hosts</span> entry answers immediately.{" "}
+                  <span className="mono">.local</span> is not offered —{" "}
+                  <span className="mono">mDNSResponder</span> owns that suffix and every lookup
+                  waits out a multicast query, about five seconds per name, measured. HSTS-preloaded
+                  TLDs like <span className="mono">.dev</span> and <span className="mono">.app</span>{" "}
+                  are refused too: browsers force them to <span className="mono">https://</span>,
+                  which aliases cannot serve.
                 </>
               ),
             },

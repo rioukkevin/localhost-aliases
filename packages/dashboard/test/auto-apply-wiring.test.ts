@@ -12,7 +12,7 @@ import { refreshStatus, resetStatus, snapshot } from "../lib/client/status-store
 import { readAutoApply, readApply, autoApplyEnabled } from "../components/shell/auto-apply-read.ts";
 
 const base = {
-  config: { version: 2, tld: "local", dashboardPort: 7788, https: false, autoApply: true, aliases: [] },
+  config: { version: 2, tld: "test", dashboardPort: 7788, https: false, autoApply: true, aliases: [] },
   aliases: [],
   system: { loopbackIps: [], managedHosts: [], forwarder: null, applied: false, drift: [] },
   sync: { applied: false, needsPrompt: true, drift: [], privileged: [], unprivileged: [], intent: {} },

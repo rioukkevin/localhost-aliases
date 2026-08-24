@@ -80,6 +80,20 @@ function changeList(hosts: Array<{ ip: string; hostname: string }>, ips: readonl
   ];
 }
 
+/**
+ * Why the names look the way they do. Said up front because the suffix is the one choice a
+ * developer is most likely to want to "fix" to `.local` out of habit — and `.local` is the
+ * one suffix macOS makes unusable.
+ */
+function namingNote(tld: string): string {
+  return (
+    `Every alias ends in .${tld}, the default, because RFC 6761 reserves .${tld} for local ` +
+    `development: it never resolves on the public internet and it is answered straight from ` +
+    `/etc/hosts. .local is deliberately not offered — macOS hands it to Bonjour/mDNS, which ` +
+    `waits about 5 seconds for a multicast answer on every single lookup, in or out of /etc/hosts.`
+  );
+}
+
 async function caInstalled(): Promise<boolean> {
   return (await readTextOrNull(caCertPath())) !== null;
 }
@@ -98,6 +112,8 @@ export interface OnboardingState {
   complete: boolean;
   skipped: boolean;
   changes: string[];
+  /** One sentence on the alias suffix: what it is, and why .local is not an option. */
+  naming: string;
   /** The command the admin prompt will run, shown verbatim before it runs. */
   command: string | null;
   verifyUrl: string;
@@ -171,6 +187,7 @@ export async function getOnboarding(options: ServiceOptions = {}): Promise<Onboa
     complete: REQUIRED_STEPS.every((id) => byId.get(id)?.state === "done"),
     skipped: record.skipped === true,
     changes,
+    naming: namingNote(config.tld),
     command: report.intent.command.join(" "),
     verifyUrl: `http://${hostname}`,
     mcpClients: mcp.clients.map((client) => ({

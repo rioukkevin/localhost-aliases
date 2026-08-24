@@ -28,7 +28,7 @@ export async function writeRoutes(path: string, routes: Route[]): Promise<void> 
   await Bun.write(path, `${JSON.stringify(routes, null, 2)}\n`);
 }
 
-export function route(listenPort: number, targetPort: number, hostname = "test.local"): Route {
+export function route(listenPort: number, targetPort: number, hostname = "test.test"): Route {
   return { ip: "127.0.0.1", listenPort, targetPort, hostname };
 }
 

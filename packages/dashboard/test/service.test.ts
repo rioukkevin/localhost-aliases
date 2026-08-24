@@ -46,7 +46,7 @@ describe("sync", () => {
     expect(onDisk).toEqual(desired);
     expect(routes).toEqual(desired.routes);
     // The seeded dashboard alias owns the first pool address and listens on 80.
-    expect(routes[0]).toEqual({ ip: "127.0.0.2", listenPort: 80, targetPort: 7788, hostname: "index.local" });
+    expect(routes[0]).toEqual({ ip: "127.0.0.2", listenPort: 80, targetPort: 7788, hostname: "index.test" });
   });
 
   test("reports the admin prompt when nothing has been applied yet", async () => {
@@ -75,13 +75,13 @@ describe("aliases", () => {
     const { alias, sync: report } = await createAliasAndSync({ name: "Shop", port: 3000 }, bare);
 
     expect(alias.name).toBe("shop");
-    expect(alias.hostname).toBe("shop.local");
-    expect(alias.url).toBe("http://shop.local");
+    expect(alias.hostname).toBe("shop.test");
+    expect(alias.url).toBe("http://shop.test");
     expect(alias.ip).toBe("127.0.0.3");
     expect(report.needsPrompt).toBe(true);
 
     const routes = (await readJson(join(box.configDir, "routes.json"))) as Route[];
-    expect(routes.map((r) => r.hostname)).toEqual(["index.local", "shop.local"]);
+    expect(routes.map((r) => r.hostname)).toEqual(["index.test", "shop.test"]);
   });
 
   test("a duplicate name is a validation error, not a 500", async () => {
@@ -120,7 +120,7 @@ describe("aliases", () => {
     );
 
     expect(report.needsPrompt).toBe(true);
-    expect(report.privileged.join(" ")).toContain("store.local");
+    expect(report.privileged.join(" ")).toContain("store.test");
   });
 
   test("an unknown id is a 404, not a validation error", async () => {
@@ -140,7 +140,7 @@ describe("aliases", () => {
 
     expect(deleted).toBe(alias.id);
     const routes = (await readJson(join(box.configDir, "routes.json"))) as Route[];
-    expect(routes.map((r) => r.hostname)).toEqual(["index.local"]);
+    expect(routes.map((r) => r.hostname)).toEqual(["index.test"]);
   });
 
   test("a listening dev server shows as up", async () => {
@@ -162,14 +162,14 @@ describe("state", () => {
     const state = await getState(bare);
     expect(state.capacity).toEqual({ used: 1, total: 253, remaining: 252 });
     expect(state.httpsSupportedForAliases).toBe(false);
-    expect(state.dashboardHostname).toBe("index.local");
+    expect(state.dashboardHostname).toBe("index.test");
     expect(state.configDir).toBe(box.configDir);
   });
 
   test("getStatus adds the alias views the UI polls for", async () => {
     await createAliasAndSync({ name: "shop", port: 3000 }, bare);
     const status = await getStatus(bare);
-    expect(status.aliases.map((a) => a.hostname)).toEqual(["index.local", "shop.local"]);
+    expect(status.aliases.map((a) => a.hostname)).toEqual(["index.test", "shop.test"]);
     expect(status.system.drift.length).toBeGreaterThan(0);
   });
 
@@ -185,14 +185,14 @@ describe("state", () => {
 describe("settings", () => {
   test("changing the TLD rewrites every hostname", async () => {
     await createAliasAndSync({ name: "shop", port: 3000 }, bare);
-    const { config, sync: report, restartRequired } = await updateSettingsAndSync({ tld: "test" }, bare);
+    const { config, sync: report, restartRequired } = await updateSettingsAndSync({ tld: "internal" }, bare);
 
-    expect(config.tld).toBe("test");
+    expect(config.tld).toBe("internal");
     expect(restartRequired).toBe(false);
     expect(report.needsPrompt).toBe(true);
 
     const routes = (await readJson(join(box.configDir, "routes.json"))) as Route[];
-    expect(routes.map((r) => r.hostname)).toEqual(["index.test", "shop.test"]);
+    expect(routes.map((r) => r.hostname)).toEqual(["index.internal", "shop.internal"]);
   });
 
   test("moving the dashboard port asks for a restart and moves the reserved route", async () => {

@@ -14,7 +14,7 @@ export interface TextFieldProps extends Omit<ComponentProps<"input">, "size" | "
   warning?: string | null;
   /** Fixed text glued to the left of the input, e.g. ":" for a port. */
   prefix?: ReactNode;
-  /** Fixed text glued to the right, e.g. ".local". */
+  /** Fixed text glued to the right, e.g. ".test". */
   suffix?: ReactNode;
   /** Renders the label for screen readers only — used in dense inline forms. */
   hideLabel?: boolean;

@@ -15,7 +15,7 @@ export const FROM: Segment[] = [
 
 export const TO: Segment[] = [
   { text: "shop", tone: "ink" },
-  { text: ".local", tone: "faint" },
+  { text: ".test", tone: "faint" },
 ];
 
 export const segmentText = (segments: Segment[]): string => segments.map((s) => s.text).join("");
@@ -26,7 +26,7 @@ export const TO_LENGTH = segmentText(TO).length;
 /** The row in the rack. These are the four real values the product moves around. */
 export const ALIAS = {
   host: "shop",
-  tld: ".local",
+  tld: ".test",
   ip: "127.0.0.2",
   port: "3000",
   target: "127.0.0.1",

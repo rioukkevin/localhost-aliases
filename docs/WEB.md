@@ -108,7 +108,11 @@ password into a thing that edits `/etc/hosts` as root:
 - Say plainly that project aliases are **http:// only**, and why (a raw TCP forwarder never sees
   the bytes, so nothing can terminate TLS).
 - Say what runs as root, when, and that nothing is permanently installed.
-- Never claim notarization/signing that has not happened.
+- Never claim notarization/signing that has not happened. There is no auto-update either: a new
+  build is a download the reader chooses, and the changelog is how they learn one exists.
+- Every example hostname ends in `.test`. `.local` is refused by the app (see
+  [docs/TLD.md](TLD.md)) and so are the HSTS-preloaded TLDs, so an example using one teaches a
+  name the product will reject — the site's copy is the first place that rot shows up.
 
 ## Env vars
 

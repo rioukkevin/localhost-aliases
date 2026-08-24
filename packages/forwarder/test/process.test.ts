@@ -30,7 +30,7 @@ async function launch(): Promise<{ listenPort: number; statusFile: string; liven
   dir = await tempDir();
   upstream = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("spawned upstream") });
   const listenPort = freePort();
-  await writeRoutes(join(dir, "routes.json"), [route(listenPort, upstream.port!, "spawned.local")]);
+  await writeRoutes(join(dir, "routes.json"), [route(listenPort, upstream.port!, "spawned.test")]);
 
   const livenessFile = join(dir, "liveness");
   await Bun.write(livenessFile, "");

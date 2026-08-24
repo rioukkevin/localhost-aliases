@@ -16,6 +16,7 @@ import {
   type UpdateAliasInput,
 } from "./types.ts";
 import { allocateIp, isValidIpv4 } from "./ips.ts";
+import { blockedTldReason } from "./tld.ts";
 import { assertValidAlias, assertValidPort, assertValidTld, isValidPort, isValidTld, normalizeName } from "./validation.ts";
 import { backupFile, readFileOrNull, writeFileAtomic } from "./atomic.ts";
 
@@ -82,6 +83,23 @@ function coerceAlias(raw: Record<string, unknown>, taken: Set<string>): Alias | 
 }
 
 /**
+ * A config written before a suffix was blocked may still name it — the developer's own
+ * machine says "local". There is no migration flow by design: the value is replaced by the
+ * default, said once in the log, and written straight back, so the very next reconcile
+ * rewrites /etc/hosts through the normal apply path. Aliases are untouched: only the suffix
+ * changes, every name, IP and port survives.
+ */
+function coerceTld(raw: unknown): string {
+  if (typeof raw !== "string" || !isValidTld(raw)) return DEFAULT_CONFIG.tld;
+  const blocked = blockedTldReason(raw);
+  if (!blocked) return raw;
+  console.warn(
+    `[localhost-aliases] TLD ".${raw}" is no longer supported, falling back to ".${DEFAULT_CONFIG.tld}". ${blocked}`,
+  );
+  return DEFAULT_CONFIG.tld;
+}
+
+/**
  * Bring any parsed JSON up to the current contract. Returns the config plus whether
  * anything had to change, so a repaired file is written back once.
  */
@@ -89,7 +107,7 @@ function normalizeConfig(parsed: unknown): { config: Config; changed: boolean } 
   const raw = (typeof parsed === "object" && parsed !== null ? parsed : {}) as Record<string, unknown>;
   let changed = false;
 
-  const tld = typeof raw.tld === "string" && isValidTld(raw.tld) ? raw.tld : DEFAULT_CONFIG.tld;
+  const tld = coerceTld(raw.tld);
   if (tld !== raw.tld) changed = true;
   const dashboardPort = isValidPort(raw.dashboardPort) ? raw.dashboardPort : DEFAULT_CONFIG.dashboardPort;
   if (dashboardPort !== raw.dashboardPort) changed = true;

@@ -4,6 +4,7 @@
  * An alias `name` may itself contain dots (`api.myapp`), so it is validated as a
  * sequence of DNS labels rather than a single label.
  */
+import { DEFAULT_TLD, blockedTldReason } from "./tld.ts";
 import {
   RESERVED_ALIAS_NAME,
   RESERVED_NAMES,
@@ -143,17 +144,19 @@ export function assertValidAlias(
   if (issues.length > 0) throw new ValidationError(issues);
 }
 
+/**
+ * Shape first, then the blocklist. A blocked suffix is a hard ValidationError, not a warning:
+ * `.local` costs ~5s per lookup and the HSTS-preloaded TLDs force https onto an http-only
+ * alias, and both failures look like something else entirely. See tld.ts for the reasons.
+ */
 export function assertValidTld(tld: unknown): void {
   if (typeof tld !== "string" || !isValidTld(tld.trim().toLowerCase())) {
     throw new ValidationError([
-      { field: "tld", message: "TLD must be lowercase letters, digits or hyphens, e.g. local." },
+      { field: "tld", message: `TLD must be lowercase letters, digits or hyphens, e.g. ${DEFAULT_TLD}.` },
     ]);
   }
-  // "local" is the default TLD, so RESERVED_NAMES does not apply here; only localhost is fatal,
-  // since anything.localhost is resolved by the OS and would never reach our hosts entry.
-  if (tld.trim().toLowerCase() === "localhost") {
-    throw new ValidationError([{ field: "tld", message: '"localhost" cannot be used as a TLD.' }]);
-  }
+  const blocked = blockedTldReason(tld);
+  if (blocked) throw new ValidationError([{ field: "tld", message: blocked }]);
 }
 
 export function assertValidPort(port: unknown, field = "port"): void {

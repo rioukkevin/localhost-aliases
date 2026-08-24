@@ -85,7 +85,7 @@ describe("probeAll", () => {
 });
 
 describe("toView", () => {
-  const config: Config = { version: 2, tld: "local", dashboardPort: 7788, https: true, autoApply: true, aliases: [] };
+  const config: Config = { version: 2, tld: "test", dashboardPort: 7788, https: true, autoApply: true, aliases: [] };
   const alias: Alias = {
     id: "a",
     name: "myapp",
@@ -101,8 +101,8 @@ describe("toView", () => {
 
   test("adds hostname, url and status", () => {
     expect(toView(alias, config, "up")).toMatchObject({
-      hostname: "myapp.local",
-      url: "http://myapp.local",
+      hostname: "myapp.test",
+      url: "http://myapp.test",
       status: "up",
     });
   });

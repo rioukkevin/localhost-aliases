@@ -36,17 +36,17 @@ const ALIAS: AliasView = {
   reserved: false,
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
-  hostname: "shop.local",
-  url: "http://shop.local",
+  hostname: "shop.test",
+  url: "http://shop.test",
   // The dev server IS answering — which says nothing at all about the alias.
   status: "up",
 };
 
-const ROUTE = { ip: "127.0.0.4", listenPort: 80, targetPort: 3000, hostname: "shop.local" };
+const ROUTE = { ip: "127.0.0.4", listenPort: 80, targetPort: 3000, hostname: "shop.test" };
 
 const APPLIED: SystemState = {
   loopbackIps: ["127.0.0.4"],
-  managedHosts: ["shop.local"],
+  managedHosts: ["shop.test"],
   forwarder: { pid: 1, startedAt: "2026-01-01T00:00:00.000Z", routes: [ROUTE], failures: [] },
   applied: true,
   drift: [],
@@ -55,7 +55,7 @@ const APPLIED: SystemState = {
 const REBOOTED: SystemState = {
   // /etc/hosts survives a reboot; the lo0 addresses do not.
   loopbackIps: [],
-  managedHosts: ["shop.local"],
+  managedHosts: ["shop.test"],
   forwarder: null,
   applied: false,
   drift: ["127.0.0.4 is missing from lo0"],
@@ -170,7 +170,7 @@ describe("reading the auto-apply state off the shared snapshot", () => {
 
   test("the setting defaults to on, including for a config written before it existed", () => {
     expect(autoApplyEnabled(null)).toBe(true);
-    expect(autoApplyEnabled({ tld: "local" } as Config)).toBe(true);
+    expect(autoApplyEnabled({ tld: "test" } as Config)).toBe(true);
     expect(autoApplyEnabled({ autoApply: false } as Config)).toBe(false);
     expect(autoApplyEnabled({ autoApply: true } as Config)).toBe(true);
   });
@@ -260,8 +260,8 @@ describe("the alias row's own words", () => {
     const html = row("deferred");
     expect(html).toContain("shop");
     expect(html).toContain("3000");
-    expect(html).toContain("Edit shop.local");
-    expect(html).toContain("Delete shop.local");
+    expect(html).toContain("Edit shop.test");
+    expect(html).toContain("Delete shop.test");
   });
 });
 

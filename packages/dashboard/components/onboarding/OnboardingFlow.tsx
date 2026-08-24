@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { DEFAULT_TLD } from "@localhost-aliases/core/types";
 import type { OnboardingStep, OnboardingStepId } from "@localhost-aliases/core/types";
 import * as api from "../../lib/client/api.ts";
 import { refreshStatus, useStatus } from "../../lib/client/status-store.ts";
@@ -23,6 +24,13 @@ const CHANGES = [
   "flushes the DNS cache so the new names resolve immediately",
   "starts a small root process that forwards <loopback-ip>:80 to 127.0.0.1:<your port>",
 ];
+
+/** Server copy wins; this is what the panel says before the first fetch lands. */
+const NAMING =
+  `Every alias ends in .${DEFAULT_TLD}, the default, because RFC 6761 reserves .${DEFAULT_TLD} for local ` +
+  "development: it never resolves on the public internet and it is answered straight from " +
+  "/etc/hosts. .local is deliberately not offered — macOS hands it to Bonjour/mDNS, which " +
+  "waits about 5 seconds for a multicast answer on every single lookup, in or out of /etc/hosts.";
 
 const NOT_CHANGED = [
   "nothing is installed in /Library, there is no LaunchDaemon and no background installer",
@@ -111,7 +119,7 @@ export function OnboardingFlow() {
     return s === "done" || s === "skipped";
   }).length;
 
-  const verifyUrl = payload?.verifyUrl ?? "http://index.local";
+  const verifyUrl = payload?.verifyUrl ?? `http://index.${DEFAULT_TLD}`;
   const command =
     payload?.command ??
     "osascript -e 'do shell script \"…/privileged/apply.sh …/desired-state.json\" with administrator privileges'";
@@ -181,7 +189,8 @@ export function OnboardingFlow() {
               </Button>
             }
           >
-            <p>Applying does exactly four things, and nothing else:</p>
+            <p className="text-faint">{payload?.naming ?? NAMING}</p>
+            <p className="mt-3">Applying does exactly four things, and nothing else:</p>
             <ul className="mt-2 space-y-1">
               {(payload?.changes.length ? payload.changes : CHANGES).map((line) => (
                 <li key={line} className="flex gap-2">
@@ -267,7 +276,7 @@ export function OnboardingFlow() {
               trusting a CA is a keychain operation and the dashboard has no business doing it.
               It goes into your <em>login</em> keychain (never the System keychain) and serves
               the dashboard over{" "}
-              <span className="mono text-ink">https://index.{config?.tld ?? "local"}</span>.
+              <span className="mono text-ink">https://index.{config?.tld ?? DEFAULT_TLD}</span>.
               Firefox keeps its own certificate store and will still warn until you trust the CA
               there too. Your project aliases stay http:// either way.
             </p>

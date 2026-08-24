@@ -494,7 +494,7 @@ describe("5. edge cases an adversary would go for", () => {
     await w.answer("ok");
     await getState(opts());
     const before = w.prompts.length;
-    await updateSettingsAndSync({ tld: "test" }, opts());
+    await updateSettingsAndSync({ tld: "internal" }, opts());
     await w.advance(AUTO_APPLY_DEBOUNCE_MS);
     expect(w.prompts.length).toBe(before + 1);
   });

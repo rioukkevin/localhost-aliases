@@ -9,7 +9,7 @@ survives a reboot except two lines of text you can delete by hand.
 
 ## Why root is needed at all
 
-A name like `myapp.local` has to resolve, and something has to answer on port 80.
+A name like `myapp.test` has to resolve, and something has to answer on port 80.
 
 | What we need | Why it needs root |
 |---|---|
@@ -50,7 +50,7 @@ second time.
 
    ```
    # >>> localhost-aliases >>>
-   127.0.0.2	index.local
+   127.0.0.2	index.test
    # <<< localhost-aliases <<<
    ```
 

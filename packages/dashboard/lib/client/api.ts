@@ -280,6 +280,8 @@ export interface OnboardingPayload {
   skipped: boolean;
   /** Exactly what the privileged batch will change, in the server's own words. */
   changes: string[];
+  /** One sentence on the alias suffix, including why .local is not offered. */
+  naming?: string;
   command: string | null;
   verifyUrl: string | null;
   mcpClients: McpClientInfo[];

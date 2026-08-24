@@ -24,7 +24,11 @@ struct AppConfig: Decodable {
     let https: Bool
     let aliases: [AliasEntry]
 
-    static let fallback = AppConfig(tld: "local", dashboardPort: 7788, https: false, aliases: [])
+    /// Used only when config.json is missing or undecodable — the fresh-install state.
+    /// The TLD MUST track `DEFAULT_TLD` in packages/core/src/tld.ts: a blocked suffix here
+    /// would put a 5-second-stall URL in the menu before the dashboard has ever written a
+    /// config, which is the first thing a new user clicks.
+    static let fallback = AppConfig(tld: "test", dashboardPort: 7788, https: false, aliases: [])
 
     static let reservedName = "index"
 
@@ -33,7 +37,7 @@ struct AppConfig: Decodable {
 
     var reservedAlias: AliasEntry? { aliases.first { $0.reserved } }
 
-    /// `index.local` — the dashboard's own alias.
+    /// `index.test` — the dashboard's own alias.
     var dashboardHostname: String { "\(reservedAlias?.name ?? Self.reservedName).\(tld)" }
 
     var loopbackDashboardURL: String { "http://127.0.0.1:\(dashboardPort)" }

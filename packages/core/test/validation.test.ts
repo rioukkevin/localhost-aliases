@@ -126,7 +126,7 @@ describe("assertValidAlias", () => {
 
   test("rejects a name that overflows the hostname limit with its TLD", () => {
     const name = [1, 2, 3, 4].map(() => "a".repeat(63)).join(".");
-    expect(issuesFor({ name, port: 1 }, [], { tld: "local" })[0]!.message).toContain("253");
+    expect(issuesFor({ name, port: 1 }, [], { tld: "test" })[0]!.message).toContain("253");
   });
 
   test("ValidationError message lists field and message", () => {
@@ -136,16 +136,18 @@ describe("assertValidAlias", () => {
 });
 
 describe("tld", () => {
-  test.each(["local", "test", "dev"])("accepts %s", (tld) => expect(() => assertValidTld(tld)).not.toThrow());
+  test.each(["test", "internal", "lan", "home.arpa", "example"])("accepts %s", (tld) =>
+    expect(() => assertValidTld(tld)).not.toThrow(),
+  );
   test("accepts and normalizes surrounding case and whitespace", () => {
-    expect(() => assertValidTld(" LOCAL ")).not.toThrow();
+    expect(() => assertValidTld(" TEST ")).not.toThrow();
   });
-  test.each(["", " ", ".local", "lo cal", "local_host", "localhost", 42, null])("rejects %p", (tld) =>
+  test.each(["", " ", ".test", "te st", "test_dev", 42, null])("rejects %p", (tld) =>
     expect(() => assertValidTld(tld)).toThrow(ValidationError),
   );
 });
 
 describe("hostnameFor / urlFor", () => {
-  test("joins with a dot", () => expect(hostnameFor("myapp", "local")).toBe("myapp.local"));
-  test("project aliases are http only", () => expect(urlFor("myapp", "local")).toBe("http://myapp.local"));
+  test("joins with a dot", () => expect(hostnameFor("myapp", "test")).toBe("myapp.test"));
+  test("project aliases are http only", () => expect(urlFor("myapp", "test")).toBe("http://myapp.test"));
 });

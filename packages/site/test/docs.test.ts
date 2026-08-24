@@ -97,6 +97,27 @@ describe("doc pages", () => {
     expect(text).not.toContain("reverse proxy");
     expect(text).not.toContain("http proxy");
   });
+
+  test("no example teaches a hostname the app refuses", () => {
+    const text = JSON.stringify(DOC_PAGES);
+
+    // The app rejects `.local`, `.localhost` and the HSTS-preloaded TLDs, so an example under
+    // one of them documents a name the user cannot create. Two names are deliberate and are
+    // named here so a third cannot slip in unnoticed: `nope-xyz.local` is the subject of the
+    // measurement, and `foo.dev` shows that the last label is what gets judged.
+    const deliberate = new Set(["nope-xyz.local", "foo.dev"]);
+    for (const hostname of text.match(/\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(local|dev|app|page)\b/g) ?? []) {
+      expect(deliberate).toContain(hostname);
+    }
+    expect(text).toContain("index.test");
+  });
+
+  test("the TLD rule is explained, not just applied", () => {
+    const text = JSON.stringify(DOC_PAGES);
+    expect(text).toContain("RFC 6761"); // why .test
+    expect(text).toContain("RFC 6762"); // why not .local
+    expect(text).toContain("HSTS"); // why not .dev / .app / .page
+  });
 });
 
 describe("tokenizeInline", () => {

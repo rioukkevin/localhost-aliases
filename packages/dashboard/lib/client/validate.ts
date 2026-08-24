@@ -7,7 +7,7 @@
  * what the field already said.
  */
 import type { AliasView } from "@localhost-aliases/core/types";
-import { RESERVED_ALIAS_NAME, RESERVED_NAMES } from "@localhost-aliases/core/types";
+import { RESERVED_ALIAS_NAME, RESERVED_NAMES, blockedTldReason } from "@localhost-aliases/core/types";
 
 const MAX_LABEL_LENGTH = 63;
 const MAX_HOSTNAME_LENGTH = 253;
@@ -87,6 +87,10 @@ export function isAbsolutePath(path: string): boolean {
   return path.startsWith("/") && !path.includes("//") && path.trim() === path;
 }
 
+/**
+ * Shape, then core's blocklist verbatim — so the field says the same specific sentence the
+ * server would, rather than letting the user save a suffix that fails silently in a browser.
+ */
 export function validateTld(raw: string): string | null {
   const tld = raw.trim().toLowerCase();
   if (tld === "") return "A TLD is required.";
@@ -97,7 +101,7 @@ export function validateTld(raw: string): string | null {
       return "Use letters, digits and hyphens only.";
     }
   }
-  return null;
+  return blockedTldReason(tld);
 }
 
 /** The dashboard binds a high port on 127.0.0.1; below 1024 would need root. */

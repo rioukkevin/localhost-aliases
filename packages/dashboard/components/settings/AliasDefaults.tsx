@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { DEFAULT_TLD, SAFE_TLDS } from "@localhost-aliases/core/types";
 import * as api from "../../lib/client/api.ts";
 import { useStatus, withRefresh } from "../../lib/client/status-store.ts";
 import { validateDashboardPort, validateTld } from "../../lib/client/validate.ts";
@@ -12,8 +13,12 @@ import { useToast } from "../ui/Toast.tsx";
 
 /**
  * The few things that are global: the TLD every name ends in, where the dashboard
- * itself listens, and whether it does so over https. Unchanged logic from the old
- * settings page — only the column it sits in got narrower.
+ * itself listens, and whether it does so over https.
+ *
+ * The TLD field offers only suffixes that actually work. `.local` and the HSTS-preloaded
+ * TLDs are not presented at all, and typing one is rejected inline with the reason it
+ * fails — a suffix that costs 5s per lookup or force-upgrades to https is not a taste
+ * question, and a generic "not allowed" would just send the user to the next broken one.
  */
 export function AliasDefaults() {
   const { config, aliases, loaded } = useStatus();
@@ -93,17 +98,40 @@ export function AliasDefaults() {
       }
     >
       <div className="flex flex-col gap-4">
-        <TextField
-          label="TLD"
-          prefix="."
-          value={tld}
-          error={tldError}
-          hint="appended to every alias name, e.g. myapp.local"
-          onChange={(e) => {
-            setDirty(true);
-            setTld(e.currentTarget.value);
-          }}
-        />
+        <div className="flex flex-col gap-2">
+          <TextField
+            label="TLD"
+            prefix="."
+            value={tld}
+            error={tldError}
+            hint={`appended to every alias name, e.g. myapp.${DEFAULT_TLD}`}
+            onChange={(e) => {
+              setDirty(true);
+              setTld(e.currentTarget.value);
+            }}
+          />
+          <div className="flex flex-wrap items-center gap-1.5" data-testid="tld-options">
+            {SAFE_TLDS.map((option) => (
+              <button
+                key={option}
+                type="button"
+                aria-pressed={tld === option}
+                onClick={() => {
+                  setDirty(true);
+                  setTld(option);
+                }}
+                className={[
+                  "mono rounded-[2px] border px-2 py-[3px] text-[11px] transition-colors",
+                  tld === option
+                    ? "border-accent/40 text-accent"
+                    : "border-hairline-strong text-faint hover:text-ink",
+                ].join(" ")}
+              >
+                .{option}
+              </button>
+            ))}
+          </div>
+        </div>
         <TextField
           label="Dashboard port"
           prefix=":"

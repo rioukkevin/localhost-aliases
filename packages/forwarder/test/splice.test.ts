@@ -39,7 +39,7 @@ beforeAll(async () => {
 
   listenPort = freePort();
   const routesFile = join(dir, "routes.json");
-  await writeRoutes(routesFile, [route(listenPort, upstream.port!, "splice.local")]);
+  await writeRoutes(routesFile, [route(listenPort, upstream.port!, "splice.test")]);
   forwarder = new Forwarder({
     routesFile,
     statusFile: join(dir, "forwarder-status.json"),
@@ -94,7 +94,7 @@ test("raw TCP bytes pass through untouched, and an abandoned pair is reaped", as
   const echo = rawEcho();
   const port = freePort();
   const routesFile = join(dir, "raw-routes.json");
-  await writeRoutes(routesFile, [route(port, echo.port, "raw.local")]);
+  await writeRoutes(routesFile, [route(port, echo.port, "raw.test")]);
   // Bun cannot tell a half-closed client from one that vanished, so a finished pair is
   // reaped on a timer. One second here; the shipped default is 15.
   const raw = new Forwarder({
@@ -154,7 +154,7 @@ test("a slow reader does not balloon memory: queued bytes stay bounded", async (
 
   const port = freePort();
   const routesFile = join(dir, "bp-routes.json");
-  await writeRoutes(routesFile, [route(port, blaster.port, "bp.local")]);
+  await writeRoutes(routesFile, [route(port, blaster.port, "bp.test")]);
   const bp = new Forwarder({ routesFile, statusFile: join(dir, "bp-status.json"), log: () => {} });
   await bp.start();
 

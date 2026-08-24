@@ -47,7 +47,7 @@ describe("apply.sh, first run", () => {
     expect(s.lo0()).toEqual(["127.0.0.1", "127.0.0.2", "127.0.0.3"]);
 
     expect(s.hosts()).toBe(
-      `${SYSTEM_HOSTS}${HOSTS_BEGIN}\n127.0.0.2\tindex.local\n127.0.0.3\tmyapp.local\n${HOSTS_END}\n`,
+      `${SYSTEM_HOSTS}${HOSTS_BEGIN}\n127.0.0.2\tindex.test\n127.0.0.3\tmyapp.test\n${HOSTS_END}\n`,
     );
     expect(s.calls("dscacheutil")).toEqual(["-flushcache"]);
     expect(s.calls("killall")).toEqual(["-HUP mDNSResponder"]);
@@ -71,7 +71,7 @@ describe("apply.sh, first run", () => {
     const s = sandbox();
     const r = await apply(s, ["--no-forwarder", s.writeState(STATE_TWO)]);
     expect(r.summary.forwarder).toBe("skipped");
-    expect(s.hosts()).toContain("myapp.local");
+    expect(s.hosts()).toContain("myapp.test");
     expect(existsSync(join(s.root, "forwarder.calls"))).toBe(false);
   });
 });
@@ -113,7 +113,7 @@ describe("apply.sh, changes", () => {
     const s = sandbox();
     await apply(s, [s.writeState(STATE_TWO)]);
     const smaller = {
-      hosts: [{ ip: "127.0.0.2", hostname: "index.local" }],
+      hosts: [{ ip: "127.0.0.2", hostname: "index.test" }],
       loopbackIps: ["127.0.0.2"],
       routes: [],
     };
@@ -122,8 +122,8 @@ describe("apply.sh, changes", () => {
     expect(r.summary).toMatchObject({ ips_added: "0", ips_removed: "1", hosts: "changed", forwarder: "restarted" });
     expect(s.calls("ifconfig")).toContain("lo0 -alias 127.0.0.3");
     expect(s.lo0()).toEqual(["127.0.0.1", "127.0.0.2"]);
-    expect(s.hosts()).not.toContain("myapp.local");
-    expect(s.hosts()).toContain("index.local");
+    expect(s.hosts()).not.toContain("myapp.test");
+    expect(s.hosts()).toContain("index.test");
   });
 
   test("127.0.0.1 is never removed, and neither is anything outside the pool", async () => {
@@ -160,10 +160,10 @@ describe("apply.sh, /etc/hosts is not ours to mangle", () => {
   test("content after the block survives byte-for-byte", async () => {
     const s = sandbox();
     const tail = "# added by hand\n10.1.2.3\tstaging.internal\n";
-    writeFileSync(s.hostsPath, `${SYSTEM_HOSTS}${HOSTS_BEGIN}\n127.0.0.9\told.local\n${HOSTS_END}\n${tail}`);
+    writeFileSync(s.hostsPath, `${SYSTEM_HOSTS}${HOSTS_BEGIN}\n127.0.0.9\told.test\n${HOSTS_END}\n${tail}`);
     await apply(s, [s.writeState(STATE_TWO)]);
     expect(s.hosts()).toBe(
-      `${SYSTEM_HOSTS}${HOSTS_BEGIN}\n127.0.0.2\tindex.local\n127.0.0.3\tmyapp.local\n${HOSTS_END}\n${tail}`,
+      `${SYSTEM_HOSTS}${HOSTS_BEGIN}\n127.0.0.2\tindex.test\n127.0.0.3\tmyapp.test\n${HOSTS_END}\n${tail}`,
     );
   });
 
@@ -171,14 +171,14 @@ describe("apply.sh, /etc/hosts is not ours to mangle", () => {
     const s = sandbox();
     writeFileSync(
       s.hostsPath,
-      `${SYSTEM_HOSTS}${HOSTS_BEGIN}\n127.0.0.9\ta.local\n${HOSTS_END}\nmiddle\n${HOSTS_BEGIN}\n127.0.0.8\tb.local\n${HOSTS_END}\n`,
+      `${SYSTEM_HOSTS}${HOSTS_BEGIN}\n127.0.0.9\ta.test\n${HOSTS_END}\nmiddle\n${HOSTS_BEGIN}\n127.0.0.8\tb.test\n${HOSTS_END}\n`,
     );
     await apply(s, [s.writeState(STATE_TWO)]);
     const out = s.hosts();
     expect(out.split(HOSTS_BEGIN).length - 1).toBe(1);
     expect(out).toContain("middle\n");
-    expect(out).not.toContain("a.local");
-    expect(out).not.toContain("b.local");
+    expect(out).not.toContain("a.test");
+    expect(out).not.toContain("b.test");
   });
 
   test("a file with no trailing newline still gets a well-formed block", async () => {
@@ -186,7 +186,7 @@ describe("apply.sh, /etc/hosts is not ours to mangle", () => {
     writeFileSync(s.hostsPath, "127.0.0.1\tlocalhost");
     await apply(s, [s.writeState(STATE_TWO)]);
     expect(s.hosts()).toBe(
-      `127.0.0.1\tlocalhost\n${HOSTS_BEGIN}\n127.0.0.2\tindex.local\n127.0.0.3\tmyapp.local\n${HOSTS_END}\n`,
+      `127.0.0.1\tlocalhost\n${HOSTS_BEGIN}\n127.0.0.2\tindex.test\n127.0.0.3\tmyapp.test\n${HOSTS_END}\n`,
     );
   });
 });
@@ -206,7 +206,7 @@ describe("apply.sh, hostile desired state", () => {
 
   test("a hostname carrying shell metacharacters", async () => {
     await rejects({
-      hosts: [{ ip: "127.0.0.2", hostname: "a.local; touch /tmp/pwned" }],
+      hosts: [{ ip: "127.0.0.2", hostname: "a.test; touch /tmp/pwned" }],
       loopbackIps: ["127.0.0.2"],
       routes: [],
     });
@@ -214,7 +214,7 @@ describe("apply.sh, hostile desired state", () => {
 
   test("a hostname carrying a newline and a second entry", async () => {
     await rejects({
-      hosts: [{ ip: "127.0.0.2", hostname: "a.local\n8.8.8.8\tgoogle.com" }],
+      hosts: [{ ip: "127.0.0.2", hostname: "a.test\n8.8.8.8\tgoogle.com" }],
       loopbackIps: ["127.0.0.2"],
       routes: [],
     });
@@ -242,7 +242,7 @@ describe("apply.sh, hostile desired state", () => {
 
   test("an uppercase hostname", async () => {
     await rejects({
-      hosts: [{ ip: "127.0.0.2", hostname: "MyApp.local" }],
+      hosts: [{ ip: "127.0.0.2", hostname: "MyApp.test" }],
       loopbackIps: ["127.0.0.2"],
       routes: [],
     });
@@ -251,8 +251,8 @@ describe("apply.sh, hostile desired state", () => {
   test("the same hostname twice", async () => {
     await rejects({
       hosts: [
-        { ip: "127.0.0.2", hostname: "a.local" },
-        { ip: "127.0.0.2", hostname: "a.local" },
+        { ip: "127.0.0.2", hostname: "a.test" },
+        { ip: "127.0.0.2", hostname: "a.test" },
       ],
       loopbackIps: ["127.0.0.2"],
       routes: [],
@@ -261,7 +261,7 @@ describe("apply.sh, hostile desired state", () => {
 
   test("a hosts entry whose address is not being brought up", async () => {
     await rejects({
-      hosts: [{ ip: "127.0.0.5", hostname: "a.local" }],
+      hosts: [{ ip: "127.0.0.5", hostname: "a.test" }],
       loopbackIps: ["127.0.0.2"],
       routes: [],
     });
@@ -292,7 +292,7 @@ describe("apply.sh, hostile desired state", () => {
     for (const name of ["local", "myapp", "index", "com"]) writeFileSync(join(cwd, name), "");
     const before = s.hosts();
 
-    for (const hostname of ["*", "*.local", "?", "[a-z]"]) {
+    for (const hostname of ["*", "*.test", "?", "[a-z]"]) {
       const state = join(s.root, "glob-state.json");
       writeFileSync(state, JSON.stringify({ hosts: [{ ip: "127.0.0.2", hostname }], loopbackIps: ["127.0.0.2"], routes: [] }));
       const proc = Bun.spawn(["/bin/bash", APPLY, state], { cwd, env: s.env(), stdout: "pipe", stderr: "pipe", stdin: "ignore" });

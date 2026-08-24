@@ -1,5 +1,6 @@
 "use client";
 
+import { DEFAULT_TLD } from "@localhost-aliases/core/types";
 import type { AliasView, CreateAliasInput } from "@localhost-aliases/core/types";
 import * as api from "../../lib/client/api.ts";
 import { folderName, pendingAlias } from "../../lib/client/format.ts";
@@ -14,7 +15,7 @@ import { useToast } from "../ui/Toast.tsx";
 export function useAliasActions() {
   const toast = useToast();
   const { config } = useStatus();
-  const tld = config?.tld ?? "local";
+  const tld = config?.tld ?? DEFAULT_TLD;
 
   function fail(title: string, err: unknown): never {
     toast.push({ tone: "error", title, detail: api.errorMessage(err) });

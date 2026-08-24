@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { parseRoutes, readRoutes, routeKey } from "../src/routes.ts";
 import { cleanup, tempDir } from "./helpers.ts";
 
-const good = [{ ip: "127.0.0.2", listenPort: 80, targetPort: 3000, hostname: "a.local" }];
+const good = [{ ip: "127.0.0.2", listenPort: 80, targetPort: 3000, hostname: "a.test" }];
 
 describe("parseRoutes", () => {
   test("accepts a bare array", () => {
@@ -39,7 +39,7 @@ describe("parseRoutes", () => {
 
   test("drops a duplicate ip:listenPort", () => {
     const { routes, errors } = parseRoutes(
-      JSON.stringify([...good, { ...good[0], targetPort: 4000, hostname: "b.local" }]),
+      JSON.stringify([...good, { ...good[0], targetPort: 4000, hostname: "b.test" }]),
     );
     expect(routes).toHaveLength(1);
     expect(errors[0]).toContain("duplicate 127.0.0.2:80");

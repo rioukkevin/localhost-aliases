@@ -53,8 +53,8 @@ export function alias(overrides: Partial<AliasView> = {}): AliasView {
     reserved: false,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
-    hostname: `${name}.local`,
-    url: `http://${name}.local`,
+    hostname: `${name}.test`,
+    url: `http://${name}.test`,
     status: "down",
     ...overrides,
   };

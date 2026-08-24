@@ -55,7 +55,7 @@ test.skipIf(!python)("a client that half-closes still gets its response", async 
   dir = await tempDir();
   upstream = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("half-close ok") });
   const listenPort = freePort();
-  await writeRoutes(join(dir, "routes.json"), [route(listenPort, upstream.port!, "half.local")]);
+  await writeRoutes(join(dir, "routes.json"), [route(listenPort, upstream.port!, "half.test")]);
   forwarder = new Forwarder({
     routesFile: join(dir, "routes.json"),
     statusFile: join(dir, "status.json"),
@@ -77,7 +77,7 @@ test.skipIf(!python)("a half-closed connection nothing answers is reaped", async
   dir = await tempDir();
   const silent = rawEcho(); // accepts the connection, replies to nothing it is not sent
   const listenPort = freePort();
-  await writeRoutes(join(dir, "routes.json"), [route(listenPort, silent.port, "silent.local")]);
+  await writeRoutes(join(dir, "routes.json"), [route(listenPort, silent.port, "silent.test")]);
   forwarder = new Forwarder({
     routesFile: join(dir, "routes.json"),
     statusFile: join(dir, "status.json"),

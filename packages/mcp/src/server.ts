@@ -1,6 +1,7 @@
 /** Wires the handlers into an McpServer. No transport here — see index.ts. */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { DEFAULT_TLD } from "@localhost-aliases/core/types";
 import { DashboardClient } from "./client.ts";
 import { serverInstructions } from "./instructions.ts";
 import * as tools from "./tools.ts";
@@ -49,7 +50,7 @@ export function createServer(client: DashboardClient = new DashboardClient()): M
       inputSchema: {
         name: z
           .string()
-          .describe("Host label without the TLD, e.g. \"myapp\" for myapp.local. Lowercase letters, digits and hyphens."),
+          .describe(`Host label without the TLD, e.g. "myapp" for myapp.${DEFAULT_TLD}. Lowercase letters, digits and hyphens.`),
         port: z.number().int().min(1).max(65535).describe("Port the dev server listens on, on 127.0.0.1."),
         projectPath: z.string().optional().describe("Absolute path of the project folder, if any."),
         description: z.string().optional().describe("Short note shown in the dashboard."),
@@ -67,7 +68,7 @@ export function createServer(client: DashboardClient = new DashboardClient()): M
         "Delete an alias by hostname, name or id. Removes its /etc/hosts line and loopback IP " +
         "behind one macOS admin prompt. The reserved dashboard alias cannot be deleted.",
       inputSchema: {
-        alias: z.string().describe("Hostname (myapp.local), bare name (myapp) or alias id."),
+        alias: z.string().describe(`Hostname (myapp.${DEFAULT_TLD}), bare name (myapp) or alias id.`),
       },
       annotations: { destructiveHint: true },
     },
@@ -87,7 +88,7 @@ export function createServer(client: DashboardClient = new DashboardClient()): M
         alias: z
           .string()
           .optional()
-          .describe("Hostname (myapp.local), bare name (myapp) or alias id to attach. Omit to only import the folder's declared aliases."),
+          .describe(`Hostname (myapp.${DEFAULT_TLD}), bare name (myapp) or alias id to attach. Omit to only import the folder's declared aliases.`),
         importWorkspace: z
           .boolean()
           .optional()

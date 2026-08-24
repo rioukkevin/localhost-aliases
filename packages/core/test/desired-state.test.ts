@@ -17,7 +17,7 @@ function alias(partial: Partial<Alias> & Pick<Alias, "name" | "port" | "ip">): A
 
 const CONFIG: Config = {
   version: 2,
-  tld: "local",
+  tld: "test",
   dashboardPort: 7788,
   https: false,
   autoApply: true,
@@ -47,13 +47,13 @@ describe("buildDesiredState", () => {
   test("maps enabled aliases to hosts, IPs and routes", () => {
     const desired = buildDesiredState(CONFIG);
     expect(desired.hosts).toEqual([
-      { ip: "127.0.0.2", hostname: "index.local" },
-      { ip: "127.0.0.3", hostname: "myapp.local" },
+      { ip: "127.0.0.2", hostname: "index.test" },
+      { ip: "127.0.0.3", hostname: "myapp.test" },
     ]);
     expect(desired.loopbackIps).toEqual(["127.0.0.2", "127.0.0.3"]);
     expect(desired.routes).toEqual([
-      { ip: "127.0.0.2", listenPort: LISTEN_PORT, targetPort: 7788, hostname: "index.local" },
-      { ip: "127.0.0.3", listenPort: LISTEN_PORT, targetPort: 3000, hostname: "myapp.local" },
+      { ip: "127.0.0.2", listenPort: LISTEN_PORT, targetPort: 7788, hostname: "index.test" },
+      { ip: "127.0.0.3", listenPort: LISTEN_PORT, targetPort: 3000, hostname: "myapp.test" },
     ]);
   });
 
@@ -74,11 +74,11 @@ describe("buildDesiredState", () => {
     };
     const desired = buildDesiredState(config);
     expect(desired.loopbackIps).not.toContain("127.0.0.4");
-    expect(desired.routes.map((r) => r.hostname)).not.toContain("off.local");
+    expect(desired.routes.map((r) => r.hostname)).not.toContain("off.test");
   });
 
   test("the configured TLD is used", () => {
-    expect(buildDesiredState({ ...CONFIG, tld: "test" }).hosts[0]!.hostname).toBe("index.test");
+    expect(buildDesiredState({ ...CONFIG, tld: "internal" }).hosts[0]!.hostname).toBe("index.internal");
   });
 
   test("listen port is 80 for every route", () => {
@@ -110,7 +110,7 @@ describe("diffDesiredState — no prompt", () => {
     expect(diff.privileged).toEqual([]);
     expect(diff.applied).toBe(false);
     expect(diff.unprivileged).toHaveLength(1);
-    expect(diff.unprivileged[0]).toContain("myapp.local");
+    expect(diff.unprivileged[0]).toContain("myapp.test");
     expect(diff.unprivileged[0]).toContain("3001");
     expect(diff.unprivileged[0]).toContain("reloads");
   });
@@ -119,16 +119,16 @@ describe("diffDesiredState — no prompt", () => {
     const desired = buildDesiredState({ ...CONFIG, dashboardPort: 9100 });
     const diff = diffDesiredState(desired, live());
     expect(diff.needsPrompt).toBe(false);
-    expect(diff.unprivileged[0]).toContain("index.local");
+    expect(diff.unprivileged[0]).toContain("index.test");
   });
 
   test("a route the forwarder still holds but no longer needs does not prompt", () => {
     const desired = buildDesiredState(CONFIG);
-    const stale: Route = { ip: "127.0.0.9", listenPort: 80, targetPort: 5000, hostname: "gone.local" };
+    const stale: Route = { ip: "127.0.0.9", listenPort: 80, targetPort: 5000, hostname: "gone.test" };
     // the lo0 address is already gone, so only the forwarder is behind
     const diff = diffDesiredState(desired, live({ forwarder: forwarder([...desired.routes, stale]) }));
     expect(diff.needsPrompt).toBe(false);
-    expect(diff.unprivileged[0]).toContain("gone.local");
+    expect(diff.unprivileged[0]).toContain("gone.test");
   });
 
   test("unmanaged loopback addresses outside the pool are ignored", () => {
@@ -164,7 +164,7 @@ describe("diffDesiredState — prompt required", () => {
     });
     const diff = diffDesiredState(desired, live());
     expect(diff.needsPrompt).toBe(true);
-    expect(diff.privileged.join(" ")).toContain("fresh.local");
+    expect(diff.privileged.join(" ")).toContain("fresh.test");
   });
 
   test("a rename prompts", () => {
@@ -178,17 +178,17 @@ describe("diffDesiredState — prompt required", () => {
   });
 
   test("a changed TLD prompts", () => {
-    const diff = diffDesiredState(buildDesiredState({ ...CONFIG, tld: "test" }), live());
+    const diff = diffDesiredState(buildDesiredState({ ...CONFIG, tld: "internal" }), live());
     expect(diff.needsPrompt).toBe(true);
   });
 
   test("a leftover /etc/hosts entry prompts", () => {
     const diff = diffDesiredState(
       buildDesiredState(CONFIG),
-      live({ managedHosts: ["index.local", "myapp.local", "old.local"] }),
+      live({ managedHosts: ["index.test", "myapp.test", "old.test"] }),
     );
     expect(diff.needsPrompt).toBe(true);
-    expect(diff.privileged.join(" ")).toContain("old.local");
+    expect(diff.privileged.join(" ")).toContain("old.test");
   });
 
   test("a stopped forwarder prompts", () => {
@@ -211,7 +211,7 @@ describe("diffDesiredState — prompt required", () => {
   test("a hostname bound to the wrong IP prompts", () => {
     const desired = buildDesiredState(CONFIG);
     const wrong = desired.routes.map((r) =>
-      r.hostname === "myapp.local" ? { ...r, ip: "127.0.0.7" } : r,
+      r.hostname === "myapp.test" ? { ...r, ip: "127.0.0.7" } : r,
     );
     const diff = diffDesiredState(desired, live({ forwarder: forwarder(wrong) }));
     expect(diff.needsPrompt).toBe(true);
@@ -242,7 +242,7 @@ describe("diffDesiredState — prompt required", () => {
       ...CONFIG,
       aliases: [CONFIG.aliases[0]!, alias({ name: "myapp", port: 3001, ip: "127.0.0.3" })],
     });
-    const diff = diffDesiredState(desired, live({ managedHosts: ["index.local"] }));
+    const diff = diffDesiredState(desired, live({ managedHosts: ["index.test"] }));
     expect(diff.drift).toEqual([...diff.privileged, ...diff.unprivileged]);
     expect(diff.privileged).toHaveLength(1);
     expect(diff.unprivileged).toHaveLength(1);

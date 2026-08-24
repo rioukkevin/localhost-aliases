@@ -1,12 +1,12 @@
 # Localhost Aliases
 
-Give your local dev servers real names. `http://myapp.local` instead of `http://localhost:3000`,
+Give your local dev servers real names. `http://myapp.test` instead of `http://localhost:3000`,
 so every project is recognisable at a glance in your browser's tab bar and history.
 
 ```
-  myapp.local        ──────────────▶  127.0.0.3:80  ──▶  127.0.0.1:3000
-  api.myapp.local    ──────────────▶  127.0.0.4:80  ──▶  127.0.0.1:3001
-  docs.local         ──────────────▶  127.0.0.5:80  ──▶  127.0.0.1:4321
+  myapp.test        ──────────────▶  127.0.0.3:80  ──▶  127.0.0.1:3000
+  api.myapp.test    ──────────────▶  127.0.0.4:80  ──▶  127.0.0.1:3001
+  docs.test         ──────────────▶  127.0.0.5:80  ──▶  127.0.0.1:4321
 ```
 
 - **Menu-bar app** — runs in the background, shows what's live, one click to stop.
@@ -108,8 +108,30 @@ make notarize  # needs NOTARY_ARGS, see packages/build/notarize.sh
 make dmg
 ```
 
-## Notes on `.local`
+## The TLD
 
-`.local` is formally reserved for mDNS/Bonjour. Explicit `/etc/hosts` entries take
-precedence on macOS, so it works — but if you hit resolution oddities on a network with
-heavy Bonjour use, switch the TLD to `.test` in Settings. Everything re-resolves instantly.
+Aliases end in **`.test`**. It is the default, and three families of TLD are refused outright:
+`.local`, the HSTS-preloaded TLDs (`.dev`, `.app`, `.page` and the rest of that list), and
+`.localhost`.
+
+- `.test` is reserved by [RFC 6761](https://www.rfc-editor.org/rfc/rfc6761#section-6.2) for
+  exactly this purpose: never delegated, never publicly resolvable, and nothing on macOS
+  intercepts it — an `/etc/hosts` entry answers in microseconds.
+- `.local` belongs to mDNS/Bonjour ([RFC 6762](https://www.rfc-editor.org/rfc/rfc6762)). On
+  macOS `mDNSResponder` claims it, and every lookup waits out a multicast query — **about five
+  seconds per name, whether or not the name is in `/etc/hosts`**.
+- HSTS-preloaded TLDs are force-upgraded to `https://` by Chrome and Safari before a request is
+  ever sent. Project aliases are `http://` only, so the browser would fail with a TLS error that
+  points nowhere near the real cause.
+- `.localhost` is resolved to `127.0.0.1` by macOS itself (RFC 6761 §6.3), ignoring
+  `/etc/hosts`. Each alias owns its own `127.0.0.x`, so the name would never reach its
+  forwarder.
+
+The dashboard offers `test`, `internal`, `lan`, `home.arpa` and `example`; each is reserved or
+private by standard and answers from `/etc/hosts`. A rejected TLD is rejected with its own
+reason, not a generic "not allowed" — otherwise you just try the next broken suffix.
+
+None of this makes `.local` broken: Bonjour resolves the names it actually owns quickly, which
+is what it is for. It is simply the wrong carrier for a name that lives in `/etc/hosts`.
+
+See [docs/TLD.md](docs/TLD.md) for the measurements and how to reproduce them.

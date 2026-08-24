@@ -3,23 +3,23 @@ import { applyBlock, isValidHostname, parseBlock, renderBlock } from "../src/hos
 import { HOSTS_BEGIN, HOSTS_END } from "../src/types.ts";
 
 const ENTRIES = [
-  { ip: "127.0.0.2", hostname: "index.local" },
-  { ip: "127.0.0.3", hostname: "myapp.local" },
+  { ip: "127.0.0.2", hostname: "index.test" },
+  { ip: "127.0.0.3", hostname: "myapp.test" },
 ];
 
 const BASE = `##\n# Host Database\n##\n127.0.0.1\tlocalhost\n255.255.255.255\tbroadcasthost\n::1             localhost\n`;
 
-const BLOCK = `${HOSTS_BEGIN}\n127.0.0.2\tindex.local\n127.0.0.3\tmyapp.local\n${HOSTS_END}\n`;
+const BLOCK = `${HOSTS_BEGIN}\n127.0.0.2\tindex.test\n127.0.0.3\tmyapp.test\n${HOSTS_END}\n`;
 
 describe("isValidHostname", () => {
-  test.each(["index.local", "a", "my-app.local", "api.myapp.test"])("accepts %s", (h) =>
+  test.each(["index.test", "a", "my-app.test", "api.myapp.test"])("accepts %s", (h) =>
     expect(isValidHostname(h)).toBe(true),
   );
   test.each([
     "",
-    "-a.local",
-    "a-.local",
-    "My.local",
+    "-a.test",
+    "a-.test",
+    "My.test",
     "a b",
     "a\tb",
     "a\nb",
@@ -48,8 +48,8 @@ describe("renderBlock", () => {
     { ip: "127.0.0.2", hostname: "bad host" },
     { ip: "127.0.0.2", hostname: "evil\n127.0.0.1\tbank.com" },
     { ip: "127.0.0.2", hostname: "" },
-    { ip: "not-an-ip", hostname: "a.local" },
-    { ip: "127.0.0.2 fake", hostname: "a.local" },
+    { ip: "not-an-ip", hostname: "a.test" },
+    { ip: "127.0.0.2 fake", hostname: "a.test" },
   ])("refuses to write %o", (entry) => {
     expect(() => renderBlock([entry])).toThrow(/Refusing to write/);
   });
@@ -69,17 +69,17 @@ describe("parseBlock", () => {
   });
 
   test("tolerates spaces instead of tabs and comment lines", () => {
-    const content = `${HOSTS_BEGIN}\n# a comment\n127.0.0.2    index.local\n\n${HOSTS_END}\n`;
-    expect(parseBlock(content)).toEqual([{ ip: "127.0.0.2", hostname: "index.local" }]);
+    const content = `${HOSTS_BEGIN}\n# a comment\n127.0.0.2    index.test\n\n${HOSTS_END}\n`;
+    expect(parseBlock(content)).toEqual([{ ip: "127.0.0.2", hostname: "index.test" }]);
   });
 
   test("skips junk lines inside the block", () => {
-    const content = `${HOSTS_BEGIN}\nnonsense\n127.0.0.2\tindex.local\n${HOSTS_END}\n`;
-    expect(parseBlock(content)).toEqual([{ ip: "127.0.0.2", hostname: "index.local" }]);
+    const content = `${HOSTS_BEGIN}\nnonsense\n127.0.0.2\tindex.test\n${HOSTS_END}\n`;
+    expect(parseBlock(content)).toEqual([{ ip: "127.0.0.2", hostname: "index.test" }]);
   });
 
   test("reads the first block when there are duplicates", () => {
-    const content = `${BLOCK}${BASE}${HOSTS_BEGIN}\n127.0.0.9\tother.local\n${HOSTS_END}\n`;
+    const content = `${BLOCK}${BASE}${HOSTS_BEGIN}\n127.0.0.9\tother.test\n${HOSTS_END}\n`;
     expect(parseBlock(content)).toEqual(ENTRIES);
   });
 
@@ -105,8 +105,8 @@ describe("applyBlock", () => {
     {
       name: "existing block is replaced in place",
       input: `${BASE}${BLOCK}# tail\n`,
-      entries: [{ ip: "127.0.0.2", hostname: "index.local" }],
-      expected: `${BASE}${HOSTS_BEGIN}\n127.0.0.2\tindex.local\n${HOSTS_END}\n# tail\n`,
+      entries: [{ ip: "127.0.0.2", hostname: "index.test" }],
+      expected: `${BASE}${HOSTS_BEGIN}\n127.0.0.2\tindex.test\n${HOSTS_END}\n# tail\n`,
     },
     {
       name: "duplicate blocks collapse into one",
@@ -116,7 +116,7 @@ describe("applyBlock", () => {
     },
     {
       name: "unterminated block is replaced up to EOF",
-      input: `${BASE}${HOSTS_BEGIN}\n127.0.0.2\thalf.local\n`,
+      input: `${BASE}${HOSTS_BEGIN}\n127.0.0.2\thalf.test\n`,
       entries: ENTRIES,
       expected: BASE + BLOCK,
     },

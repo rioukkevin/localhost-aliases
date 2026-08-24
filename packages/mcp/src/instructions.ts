@@ -7,18 +7,18 @@
  * correct in a checkout and in the built .app alike.
  */
 import { HOSTS_PATH, configDir, dashboardUrl, runtimeLayout } from "@localhost-aliases/core/paths";
-import { WORKSPACE_FILENAME } from "@localhost-aliases/core/types";
+import { DEFAULT_TLD, WORKSPACE_FILENAME } from "@localhost-aliases/core/types";
 
 export function mechanismSummary(): string {
   const layout = runtimeLayout();
   return `# How a localhost alias actually works
 
-An alias turns \`http://myapp.local\` into a dev server on \`127.0.0.1:3000\`. DNS maps a name
+An alias turns \`http://myapp.${DEFAULT_TLD}\` into a dev server on \`127.0.0.1:3000\`. DNS maps a name
 to an IP and never to a port, so three things are needed and all three are visible on disk:
 
 1. A loopback IP is allocated to the alias for life, from 127.0.0.2 to 127.0.0.254, and added
    to lo0 (\`ifconfig lo0 alias 127.0.0.2\`).
-2. A line \`127.0.0.2  myapp.local\` is written into a clearly marked managed block in
+2. A line \`127.0.0.2  myapp.${DEFAULT_TLD}\` is written into a clearly marked managed block in
    ${HOSTS_PATH}. Everything outside that block is preserved byte for byte.
 3. A small TCP forwarder runs as root and splices \`127.0.0.2:80\` to \`127.0.0.1:3000\`.
 
@@ -39,14 +39,14 @@ touches, and exits on its own when the app stops.
 ## Limitations, stated plainly
 
 - Project aliases are **http:// only**. The forwarder moves raw bytes and never sees the
-  traffic, so it cannot terminate TLS. Never tell the user to try https://myapp.local.
+  traffic, so it cannot terminate TLS. Never tell the user to try https://myapp.${DEFAULT_TLD}.
   (https:// can be offered for the dashboard alone, because we run that server ourselves.)
 - Because it is raw TCP and not an HTTP proxy, WebSockets, HMR and non-HTTP protocols all
   pass through untouched. No Host header rewriting happens, and none is needed.
 - Aliases listen on port 80 of their own loopback IP. The dev server itself keeps listening
   on 127.0.0.1:<port>; the alias is an addition, not a replacement.
 - 253 aliases is the hard ceiling (the size of the loopback pool).
-- \`index.local\` is reserved: it serves this dashboard and cannot be renamed or deleted.
+- \`index.${DEFAULT_TLD}\` is reserved: it serves this dashboard and cannot be renamed or deleted.
 - macOS only.
 
 ## State on disk
@@ -66,7 +66,7 @@ If a tool reports the dashboard is unreachable, the fix is to open the app — n
 
 export function serverInstructions(): string {
   return `Manage localhost aliases (${dashboardUrl()}) on macOS: memorable hostnames like
-http://myapp.local that reach a dev server on 127.0.0.1:<port>.
+http://myapp.${DEFAULT_TLD} that reach a dev server on 127.0.0.1:<port>.
 
 Use list_aliases before creating one — names must be unique and the tool will refuse a
 duplicate. Use create_alias when the user wants a hostname for a running dev server; it

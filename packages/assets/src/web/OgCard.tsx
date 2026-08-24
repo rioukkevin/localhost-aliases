@@ -109,7 +109,7 @@ export function OgCard() {
             }}
           >
             <span>
-              myapp<span style={{ color: brand.faint }}>.local</span>
+              myapp<span style={{ color: brand.faint }}>.test</span>
             </span>
             <Cable />
             <span>
