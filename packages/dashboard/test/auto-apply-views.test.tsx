@@ -266,37 +266,70 @@ describe("the alias row's own words", () => {
 });
 
 describe("the drift banner, which stays the whole path when nothing is automatic", () => {
-  test("idle is byte-for-byte the banner the app has always had", () => {
-    expect(driftCopy("idle", false)).toMatchObject({
+  test("with the agent down, drift is drift and the one prompt is what fixes it", () => {
+    expect(driftCopy("idle", false, false)).toMatchObject({
       testId: "banner-drift",
       tone: "warn",
       title: "Live state has drifted",
-      action: "Re-apply now",
+      action: "Start the agent",
     });
-    expect(driftCopy("idle", true).title).toBe("Nothing is applied on this Mac yet");
-    expect(driftCopy("idle", true).action).toBe("Re-apply now");
+    expect(driftCopy("idle", true, false).title).toBe("Nothing is applied on this Mac yet");
+    expect(driftCopy("idle", true, false).action).toBe("Start the agent");
+    expect(driftCopy("idle", true, false).body).toContain("one admin prompt");
+  });
+
+  /**
+   * The whole point of the new model: with the root agent up, nothing can prompt, so the
+   * banner must not offer a button that implies one — it reports and gets out of the way.
+   */
+  test("with the agent up, drift closes itself and no password is mentioned", () => {
+    for (const neverApplied of [false, true]) {
+      const copy = driftCopy("idle", neverApplied, true);
+      expect(copy.action).toBeNull();
+      expect(copy.tone).toBe("info");
+      expect(copy.title).toBe("The agent is catching up");
+      expect(copy.body).toContain("reconciles this by itself");
+      expect(copy.body).not.toContain("prompt");
+    }
   });
 
   test("while a prompt is on its way it explains, and offers no second prompt", () => {
     for (const phase of ["scheduled", "prompting"] as const) {
-      const copy = driftCopy(phase, false);
+      const copy = driftCopy(phase, false, false);
       expect(copy.testId).toBe("banner-applying");
       expect(copy.tone).toBe("info");
       expect(copy.action).toBeNull();
     }
-    expect(driftCopy("scheduled", false).body).toContain("one password");
-    expect(driftCopy("prompting", false).body).toContain("Approve it");
+    // One prompt, and it is the one that starts the agent — never one per change.
+    expect(driftCopy("scheduled", false, false).body).toContain("the one admin prompt");
+    expect(driftCopy("scheduled", false, false).body).toContain("without asking again");
+    expect(driftCopy("prompting", false, false).body).toContain("Approve it");
+    // A window that opened while the agent is already up promises no password at all.
+    expect(driftCopy("scheduled", false, true).body).toContain("nothing is going to ask");
+  });
+
+  test("no banner copy anywhere claims a prompt per change", () => {
+    const phases = ["idle", "scheduled", "prompting", "deferred", "failed"] as const;
+    for (const phase of phases) {
+      for (const agentUp of [false, true]) {
+        for (const neverApplied of [false, true]) {
+          const body = driftCopy(phase, neverApplied, agentUp).body;
+          expect(body).not.toContain("asks for your password straight away");
+          expect(body).not.toContain("per change");
+        }
+      }
+    }
   });
 
   test("a dismissed prompt is the one state that must offer a way back", () => {
-    const copy = driftCopy("deferred", false);
+    const copy = driftCopy("deferred", false, false);
     expect(copy.title).toBe("You dismissed the admin prompt");
     expect(copy.action).toBe("Try again");
     expect(copy.body).toContain("nothing on this Mac has changed");
   });
 
   test("a failure is loud, and never claims anything was changed", () => {
-    const copy = driftCopy("failed", false);
+    const copy = driftCopy("failed", false, false);
     expect(copy.tone).toBe("danger");
     expect(copy.action).toBe("Try again");
     expect(copy.body).toContain("nothing on this Mac has changed");
@@ -314,14 +347,18 @@ describe("the settings switch", () => {
     expect(html).toContain('data-testid="autoapply-toggle"');
     expect(html).toContain('role="switch"');
     expect(html).toContain('aria-checked="true"');
-    expect(html).toContain("Adding or removing an alias asks for your password straight away.");
-    expect(html).toContain("Turn this off if you would rather batch changes and apply them");
+    expect(html).toContain("Start the root agent automatically");
+    expect(html).toContain("raise the one admin prompt straight away");
+    expect(html).toContain("Turn this off to be asked only when you press the button yourself.");
+    // The pre-agent claim must not survive anywhere in this panel.
+    expect(html).not.toContain("Adding or removing an alias asks for your password straight away");
   });
 
   test("says what turning it off does — today's manual behaviour, in words", () => {
     expect(autoApplyExplainer(false)).toContain("Nothing will ask for your password on its own");
-    expect(autoApplyExplainer(false)).toContain("does not resolve until you press Re-apply now");
-    expect(autoApplyExplainer(true)).toContain("still cost one password");
+    expect(autoApplyExplainer(false)).toContain("until you start the root agent yourself");
+    expect(autoApplyExplainer(true)).toContain("At most one password per app launch");
+    expect(autoApplyExplainer(true)).toContain("never prompts while it runs");
     // The panel shows whichever of the two matches the saved setting.
     expect(html).toContain(autoApplyExplainer(true));
   });

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { DEFAULT_TLD } from "@localhost-aliases/core/types";
 import type { OnboardingStep, OnboardingStepId } from "@localhost-aliases/core/types";
 import * as api from "../../lib/client/api.ts";
@@ -13,6 +14,8 @@ import { Panel } from "../ui/Panel.tsx";
 import { LinkButton } from "../LinkButton.tsx";
 import { useToast } from "../ui/Toast.tsx";
 import { ApplyStep } from "./ApplyStep.tsx";
+import { ExitSetup } from "./ExitSetup.tsx";
+import { UNKNOWN_PLAN, exitPlan, needsSkipRecorded } from "./exit-state.ts";
 import { StepShell } from "./StepShell.tsx";
 
 const ORDER: OnboardingStepId[] = ["explain", "apply", "verify", "https", "mcp"];
@@ -55,10 +58,12 @@ function byId(steps: OnboardingStep[], id: OnboardingStepId): OnboardingStep {
 
 export function OnboardingFlow() {
   const { config } = useStatus();
+  const router = useRouter();
   const toast = useToast();
   const [payload, setPayload] = useState<api.OnboardingPayload | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [running, setRunning] = useState<api.OnboardingAction | null>(null);
+  const [leaving, setLeaving] = useState(false);
   const autoVerified = useRef(false);
 
   const load = useCallback(async () => {
@@ -120,6 +125,33 @@ export function OnboardingFlow() {
   }).length;
 
   const verifyUrl = payload?.verifyUrl ?? `http://index.${DEFAULT_TLD}`;
+  // Server truth wins for `complete`. Before the first fetch lands there is no truth to
+  // report, so the copy says so instead of accusing a working Mac of never being applied.
+  const plan = payload ? exitPlan(steps, verifyUrl, payload.complete) : UNKNOWN_PLAN;
+
+  // useSetupGate sends anyone back to /onboarding unless the record says complete or
+  // skipped. So leaving early records the skip through the action the flow already has;
+  // there is no second flag. Finished setups need nothing recorded — they just leave.
+  const leave = useCallback(async () => {
+    setLeaving(true);
+    try {
+      // The record decides, never the render: `payload` is null until the first read
+      // lands, and guessing either way is a bug — guess "finished" and the gate bounces
+      // the user back, guess "unfinished" and a finished setup gets a skip it never
+      // asked for.
+      const state = payload ?? (await api.fetchOnboarding());
+      if (needsSkipRecorded(state)) await api.runOnboarding("skip");
+      router.replace("/");
+    } catch (err) {
+      setLeaving(false);
+      toast.push({
+        tone: "error",
+        title: "Could not leave setup",
+        detail: api.errorMessage(err),
+      });
+    }
+  }, [payload, router, toast]);
+
   const command =
     payload?.command ??
     "osascript -e 'do shell script \"…/privileged/apply.sh …/desired-state.json\" with administrator privileges'";
@@ -173,6 +205,23 @@ export function OnboardingFlow() {
               );
             })}
           </div>
+        }
+        footer={
+          <ExitSetup
+            plan={plan}
+            busy={leaving}
+            onExit={() => void leave()}
+            secondary={
+              <Button
+                variant="ghost"
+                busy={running === "restart"}
+                disabled={running !== null || leaving}
+                onClick={() => void run("restart")}
+              >
+                Start over
+              </Button>
+            }
+          />
         }
       >
         <ol>
@@ -343,18 +392,6 @@ export function OnboardingFlow() {
           </StepShell>
         </ol>
       </Panel>
-
-      <div className="flex flex-wrap items-center gap-2">
-        <Button variant="ghost" disabled={running !== null} onClick={() => void run("skip")}>
-          Skip setup for now
-        </Button>
-        <Button variant="ghost" disabled={running !== null} onClick={() => void run("restart")}>
-          Start over
-        </Button>
-        <span className="text-[11px] text-faint">
-          Setup is re-runnable from Settings whenever you want.
-        </span>
-      </div>
     </div>
   );
 }

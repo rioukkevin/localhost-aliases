@@ -7,4 +7,5 @@ export * from "./store.ts";
 export * from "./desired-state.ts";
 export * from "./probe.ts";
 export * from "./workspace.ts";
+export * from "./stack.ts";
 export * from "./mcp-install.ts";

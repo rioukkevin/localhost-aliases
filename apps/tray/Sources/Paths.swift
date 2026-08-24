@@ -33,6 +33,14 @@ enum Paths {
     /// paths.ts: APPLY_REQUEST_TTL_MS. Anything older is a leftover, never a click.
     static let applyRequestTtl: TimeInterval = 90
 
+    /// Launch-at-login channel, same shape as the privileged one (see LoginItem.swift).
+    /// These two files are owned by the tray: paths.ts is frozen, and only a Swift process can
+    /// read SMAppService, so the contract lives here and the dashboard mirrors it.
+    ///   login-item.json          tray -> dashboard, the real SMAppService.Status
+    ///   login-item-request.json  dashboard -> tray, { id, action, requestedAt }
+    static var loginItemStatusPath: String { "\(configDir)/login-item.json" }
+    static var loginItemRequestPath: String { "\(configDir)/login-item-request.json" }
+
     static var logDir: String {
         env("LA_LOG_DIR") ?? "\(home)/Library/Logs/localhost-aliases"
     }

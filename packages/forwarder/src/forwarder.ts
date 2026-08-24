@@ -2,10 +2,14 @@
  * Owns the listeners. One listener per `ip:listenPort`; the target port is read per
  * connection from the live route object, so changing only a port rebinds nothing —
  * which is what lets the app change a port without an admin prompt.
+ *
+ * Routes reach it two ways, and only ever one at a time:
+ *   - it watches routes.json itself (the plain forwarder, and every existing test), or
+ *   - the root agent hands it a validated list (`setRoutes`) after reconciling the system.
+ * When the agent is driving, file watching is off: two sources of truth for what root is
+ * listening on is exactly the kind of thing that ends up bound to the wrong port.
  */
-import { watch, type FSWatcher } from "node:fs";
-import { stat } from "node:fs/promises";
-import { basename, dirname } from "node:path";
+import { basename } from "node:path";
 import type { TCPSocketListener } from "bun";
 import type { ForwarderStatus, Route } from "@localhost-aliases/core/types";
 import { forwarderStatusPath, routesPath } from "@localhost-aliases/core/paths";
@@ -13,6 +17,7 @@ import { type Logger, stderrLog } from "./log.ts";
 import { readRoutes, routeKey } from "./routes.ts";
 import { type SpliceSocketData, spliceHandlers } from "./splice.ts";
 import { clearStatus, writeStatus } from "./status.ts";
+import { FileWatcher, describe } from "./watch.ts";
 
 interface Bound {
   /** Mutated in place on reload; the splice handlers read it per connection. */
@@ -29,6 +34,16 @@ export interface ForwarderOptions {
   pollMs?: number;
   /** Seconds a half-closed, idle connection may sit before it is dropped. */
   lingerSeconds?: number;
+  /**
+   * Read routes.json and watch it. False when the root agent owns the routes: it has
+   * already validated them and hands them over directly.
+   */
+  watchRoutesFile?: boolean;
+  /**
+   * Serve the offline page when the upstream refuses a connection. On by default: a dev
+   * server that is not running is the single most common thing a user hits.
+   */
+  offlinePage?: boolean;
   log?: Logger;
 }
 
@@ -38,16 +53,15 @@ export class Forwarder {
   private readonly targetHost: string;
   private readonly pollMs: number;
   private readonly lingerSeconds: number | undefined;
+  private readonly watchRoutesFile: boolean;
+  private readonly offlinePage: boolean;
   private readonly log: Logger;
 
   private readonly bound = new Map<string, Bound>();
   private failures: ForwarderStatus["failures"] = [];
   private readonly startedAt = new Date().toISOString();
 
-  private watcher: FSWatcher | null = null;
-  private poll: ReturnType<typeof setInterval> | null = null;
-  private debounce: ReturnType<typeof setTimeout> | null = null;
-  private lastSeen = "";
+  private watcher: FileWatcher | null = null;
   private reloading: Promise<void> = Promise.resolve();
   private stopped = false;
 
@@ -57,11 +71,18 @@ export class Forwarder {
     this.targetHost = opts.targetHost ?? "127.0.0.1";
     this.pollMs = opts.pollMs ?? 2_000;
     this.lingerSeconds = opts.lingerSeconds;
+    this.watchRoutesFile = opts.watchRoutesFile ?? true;
+    this.offlinePage = opts.offlinePage ?? true;
     this.log = opts.log ?? stderrLog;
   }
 
   /** Bind what routes.json asks for, publish status, then watch the file. */
   async start(): Promise<void> {
+    if (!this.watchRoutesFile) {
+      // Nothing to bind yet; the agent calls setRoutes once it has validated the state.
+      await this.publish();
+      return;
+    }
     await this.reload();
     this.watch();
   }
@@ -77,15 +98,29 @@ export class Forwarder {
 
   /** Serialized so two file events cannot interleave two reconciles. */
   reload(): Promise<void> {
-    this.reloading = this.reloading.then(() => this.reconcile()).catch((err: Error) => {
+    this.reloading = this.reloading.then(() => this.reconcileFromFile()).catch((err: Error) => {
       this.log(`reload failed: ${err.message}`);
     });
     return this.reloading;
   }
 
-  private async reconcile(): Promise<void> {
+  /**
+   * Bind exactly these routes. The caller has already validated them — this is the agent's
+   * entry point, and it goes through the same serialization as a file reload.
+   */
+  setRoutes(routes: readonly Route[]): Promise<void> {
+    this.reloading = this.reloading
+      .then(() => this.applyRoutes(routes.map((r) => ({ ...r })), []))
+      .catch((err: Error) => {
+        this.log(`applying routes failed: ${err.message}`);
+      });
+    return this.reloading;
+  }
+
+  private async reconcileFromFile(): Promise<void> {
     if (this.stopped) return;
-    await this.primeStamp(); // read the stamp first: a write during the read is caught next poll
+    // Read the stamp first: a write during the read is caught by the next poll.
+    await this.watcher?.prime();
     const { routes, errors } = await readRoutes(this.routesFile);
     for (const error of errors) this.log(error);
 
@@ -96,7 +131,11 @@ export class Forwarder {
       await this.publish();
       return;
     }
+    await this.applyRoutes(routes, errors);
+  }
 
+  private async applyRoutes(routes: readonly Route[], errors: readonly string[]): Promise<void> {
+    if (this.stopped) return;
     const wanted = new Map(routes.map((r) => [routeKey(r), r]));
     const failures: ForwarderStatus["failures"] = [];
 
@@ -116,6 +155,7 @@ export class Forwarder {
       // Mutate in place: the listener and its open connections stay exactly as they are.
       entry.route.targetPort = want.targetPort;
       entry.route.hostname = want.hostname;
+      entry.route.hint = want.hint;
     }
 
     for (const [key, want] of wanted) {
@@ -146,6 +186,7 @@ export class Forwarder {
           targetPort: () => live.targetPort,
           targetHost: this.targetHost,
           lingerSeconds: this.lingerSeconds,
+          offlineRoute: this.offlinePage ? () => live : undefined,
           log: this.log,
         }),
       });
@@ -167,68 +208,24 @@ export class Forwarder {
     }
   }
 
-  /**
-   * routes.json is replaced by rename, which breaks a watch on the file itself, so we watch
-   * the directory. A slow mtime poll covers anything the watcher misses.
-   */
   private watch(): void {
-    const dir = dirname(this.routesFile);
-    const name = basename(this.routesFile);
-    try {
-      this.watcher = watch(dir, (_event, filename) => {
-        if (filename && basename(filename) !== name) return;
-        this.schedule();
-      });
-      this.watcher.on("error", (err) => this.log(`routes watcher error: ${describe(err)}`));
-    } catch (err) {
-      this.log(`cannot watch ${dir}: ${describe(err)}; falling back to polling`);
-    }
-    this.poll = setInterval(() => void this.checkFile(), this.pollMs);
-  }
-
-  /** Record the file's stamp before the first read, so the poll only reports real changes. */
-  private async primeStamp(): Promise<void> {
-    try {
-      const info = await stat(this.routesFile);
-      this.lastSeen = `${info.mtimeMs}:${info.size}`;
-    } catch {
-      this.lastSeen = "";
-    }
-  }
-
-  private async checkFile(): Promise<void> {
-    try {
-      const info = await stat(this.routesFile);
-      const stamp = `${info.mtimeMs}:${info.size}`;
+    this.watcher = new FileWatcher({
+      path: this.routesFile,
+      pollMs: this.pollMs,
+      log: this.log,
+      onChange: () => void this.reload(),
       // Unchanged file, but something is still broken: retry the binds that failed. A port
       // held by another process frees up without anyone editing routes.json.
-      if (stamp === this.lastSeen) {
-        if (this.failures.length > 0) this.schedule();
-        return;
-      }
-      this.lastSeen = stamp;
-      this.schedule();
-    } catch {
-      if (this.lastSeen === "") return;
-      this.lastSeen = "";
-      this.schedule();
-    }
-  }
-
-  /** Coalesce bursts: an atomic rewrite can fire several events. */
-  private schedule(): void {
-    if (this.stopped || this.debounce) return;
-    this.debounce = setTimeout(() => {
-      this.debounce = null;
-      void this.reload();
-    }, 40);
+      onUnchanged: () => {
+        if (this.failures.length > 0) this.watcher?.schedule();
+      },
+    });
+    this.watcher.start();
   }
 
   async stop(): Promise<void> {
     this.stopped = true;
-    if (this.debounce) clearTimeout(this.debounce);
-    if (this.poll) clearInterval(this.poll);
-    this.watcher?.close();
+    this.watcher?.stop();
     this.watcher = null;
     for (const [key, entry] of this.bound) {
       entry.listener.stop(true);
@@ -241,11 +238,4 @@ export class Forwarder {
 
 function fileRoute(path: string): Route {
   return { ip: "", listenPort: 0, targetPort: 0, hostname: basename(path) };
-}
-
-function describe(err: unknown): string {
-  const e = err as { code?: string; message?: string };
-  if (e?.code && e?.message) return `${e.code}: ${e.message}`;
-  if (e?.code) return e.code;
-  return e?.message ?? String(err);
 }

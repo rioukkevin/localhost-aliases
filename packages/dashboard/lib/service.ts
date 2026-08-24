@@ -15,7 +15,6 @@ import {
   POOL_SIZE,
   RESERVED_ALIAS_NAME,
   ValidationError,
-  buildDesiredState,
   configDir,
   createAlias,
   deleteAlias,
@@ -43,6 +42,7 @@ import {
   type Config,
   type CreateAliasInput,
   type DesiredState,
+  type DetectedStack,
   type McpClient,
   type McpClientId,
   type McpServerSpec,
@@ -54,6 +54,7 @@ import {
 } from "@localhost-aliases/core";
 import { autoApplyScheduler } from "./auto-apply-runtime.ts";
 import { NotFoundError, invalid } from "./http.ts";
+import { buildDesiredStateWithHints, stackForProject } from "./stack-hints.ts";
 import { writeRuntimeFiles } from "./runtime-files.ts";
 import { readSystemState, type SystemProbes } from "./system.ts";
 import type { AutoApply, AutoApplyStatus } from "./auto-apply.ts";
@@ -174,7 +175,9 @@ export async function sync(options: ServiceOptions = {}): Promise<{
   report: SyncReport;
 }> {
   const config = await loadConfig();
-  const desired = buildDesiredState(config);
+  // Hints ride along on the routes so the root agent can print "run `next dev -p 3000`"
+  // on its inline 503 without ever opening the user's project folders itself.
+  const desired = await buildDesiredStateWithHints(config);
   await writeRuntimeFiles(desired);
   const live = await readSystemState(desired, options.probes);
   return { config, desired, system: live.system, report: reportFrom(live.diff) };
@@ -363,7 +366,27 @@ async function hasWorkspaceFile(dir: string): Promise<boolean> {
   }
 }
 
-export async function listProjects(options: ServiceOptions = {}): Promise<Project[]> {
+/**
+ * A folder, plus what we think runs in it. `stack` is the dashboard's own addition to
+ * core's Project: detection is advisory, so it never became part of the shared contract.
+ * `null` means we do not recognise the folder, and every surface says exactly that
+ * instead of offering a command that would not start anything.
+ */
+export interface ProjectWithStack extends Project {
+  stack: DetectedStack | null;
+}
+
+/**
+ * Which port a folder's stack is described against. A folder can host several aliases;
+ * the command has to pin ONE port, so we use the lowest-numbered alias in the folder —
+ * a stable choice that does not shuffle when a card re-renders.
+ */
+function stackPortFor(aliases: readonly AliasView[], config: Config): number | null {
+  const ports = aliases.filter((a) => !a.reserved).map((a) => targetPortFor(a, config));
+  return ports.length === 0 ? null : Math.min(...ports);
+}
+
+export async function listProjects(options: ServiceOptions = {}): Promise<ProjectWithStack[]> {
   const config = await loadConfig();
   const linked = config.aliases.filter((a) => typeof a.projectPath === "string" && a.projectPath !== "");
   const views = await viewsFor(linked, config, options);
@@ -379,12 +402,18 @@ export async function listProjects(options: ServiceOptions = {}): Promise<Projec
   return Promise.all(
     [...byPath.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(async ([path, aliases]) => ({
-        path,
-        name: basename(path) || path,
-        hasWorkspaceFile: await hasWorkspaceFile(path),
-        aliases,
-      })),
+      .map(async ([path, aliases]) => {
+        const port = stackPortFor(aliases, config);
+        return {
+          path,
+          name: basename(path) || path,
+          hasWorkspaceFile: await hasWorkspaceFile(path),
+          aliases,
+          // A folder that has since been deleted resolves to null rather than failing
+          // the whole list: the aliases pointing at it still have to render.
+          stack: port === null ? null : await stackForProject(path, port),
+        };
+      }),
   );
 }
 

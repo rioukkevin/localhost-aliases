@@ -17,3 +17,4 @@ apps/tray/LocalhostAliases.app/
 .next-test*/
 .next*.lock
 .*.bun-build
+.next-dev/

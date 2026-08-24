@@ -26,14 +26,23 @@ Those are the only changes made to the machine, and all of them are reversible.
 
 ## Privileges
 
-There is no installed daemon, no LaunchDaemon and no sudo. All privileged work is one
-idempotent batch behind a single macOS admin prompt, run from:
+There is no installed daemon, no LaunchDaemon and no sudo. The user is asked for their
+password ONCE PER APP LAUNCH, by the idempotent batch at:
   ${layout.applyScript}
-Adding or removing an alias changes the hostname/IP set and therefore prompts once.
-Changing only the target port does NOT prompt: the forwarder watches its routes file and
-reloads. So port edits are cheap; creating and deleting aliases are not.
+That prompt starts the ROOT AGENT, which is also the forwarder. From then on the agent
+watches ${configDir()}/desired-state.json and reconciles lo0, the ${HOSTS_PATH} managed block
+and its own routes whenever that file changes — so adding, removing, renaming and re-porting
+an alias all land with NO further prompt. Do not tell the user to expect one unless a tool
+result says the agent is down.
 
-The forwarder runs as root but cannot outlive the app: it watches a liveness file the app
+The tradeoff, which is worth stating if the user asks what runs as root: desired-state.json
+is writable by the user's own account and a root process acts on it, so any process running
+as that user can ask root to edit ${HOSTS_PATH} and add loopback addresses while the app is
+open. The agent re-validates every field itself (pool addresses only, hostnames re-checked,
+edits confined to the managed block, one bad entry rejects the whole file) and never executes
+anything named in it. Quitting the app leaves nothing running as root.
+
+The agent runs as root but cannot outlive the app: it watches a liveness file the app
 touches, and exits on its own when the app stops.
 
 ## Limitations, stated plainly
@@ -69,9 +78,13 @@ export function serverInstructions(): string {
 http://myapp.${DEFAULT_TLD} that reach a dev server on 127.0.0.1:<port>.
 
 Use list_aliases before creating one — names must be unique and the tool will refuse a
-duplicate. Use create_alias when the user wants a hostname for a running dev server; it
-triggers one macOS admin prompt that the user must accept, so do not call it speculatively.
-delete_alias also prompts. Changing a port does not.
+duplicate. Use create_alias when the user wants a hostname for a running dev server.
+
+Whether it prompts depends on the root agent. While the app's root agent is running — the
+usual case — create_alias and delete_alias take effect with NO admin prompt, so do not
+promise the user one. When the agent is not running the tool result says so explicitly and
+names the prompt the user must accept. Read the tool's own result rather than assuming
+either way; changing a port never prompts.
 
 Project aliases are http:// only — never suggest https:// for them.
 

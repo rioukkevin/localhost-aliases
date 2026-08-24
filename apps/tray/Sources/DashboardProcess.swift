@@ -105,6 +105,14 @@ final class DashboardProcess {
 
     /// Terminates the child and waits briefly for it to go. Only ever signals the pid we
     /// launched — never a pattern, never a name.
+    ///
+    /// `completion` is ALWAYS called asynchronously, on the main queue, on every path.
+    /// That is not tidiness: the shutdown path passes a completion that calls
+    /// `NSApp.reply(toApplicationShouldTerminate:)`, and AppKit throws the reply away if it
+    /// arrives before `applicationShouldTerminate` has returned `.terminateLater`. The
+    /// early-return below — dashboard already stopped, or never started — used to call it
+    /// inline and hang the app forever. See TerminationCoordinator.swift, which enforces the
+    /// same invariant a second time so no future caller can reintroduce this.
     func stop(completion: (() -> Void)? = nil) {
         cancelRetry()
         stopping = true
@@ -112,7 +120,7 @@ final class DashboardProcess {
             process = nil
             closeLog()
             state = .stopped
-            completion?()
+            if let completion { DispatchQueue.main.async(execute: completion) }
             return
         }
 
@@ -136,6 +144,20 @@ final class DashboardProcess {
                 completion?()
             }
         }
+    }
+
+    /// Last resort, for the hard-exit watchdog only: SIGKILL the pid we launched, right now,
+    /// with no waiting and no completion. If the tray is about to `exit(0)` because AppKit
+    /// will not tear it down, the alternative is leaving an orphaned `bun` holding the
+    /// dashboard port. Still only ever the pid from `task.run()` — never a pattern, never a
+    /// name (that once killed unrelated dev servers).
+    func forceKill() {
+        cancelRetry()
+        stopping = true
+        guard let task = process, task.isRunning else { return }
+        let pid = task.processIdentifier
+        log.log("dashboard: force-killing pid=\(pid) during hard exit")
+        kill(pid, SIGKILL)
     }
 
     // MARK: - Restart policy

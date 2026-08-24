@@ -122,6 +122,13 @@ export interface Route {
   targetPort: number;
   /** For logging and the forwarder's status output only. */
   hostname: string;
+  /**
+   * How to start this project on `targetPort`, from packages/core/src/stack.ts. Optional and
+   * purely advisory: the offline page prints it when the upstream is not listening, so the
+   * root agent never has to read the user's project folders itself. Whoever writes the desired
+   * state fills it in; nothing depends on it being present or being right.
+   */
+  hint?: { framework: string; command: string };
 }
 
 /** Written by the dashboard, read by the privileged apply script. */

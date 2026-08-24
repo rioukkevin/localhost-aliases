@@ -42,7 +42,7 @@ privileged request **itself**, and the macOS password dialog appears without a s
 
 `config.autoApply`, default **true**. When false the product behaves exactly as it does today
 (write desired state, wait for an explicit click). Exposed in the settings drawer with a plain
-explanation: *"Adding or removing an alias asks for your password straight away. Turn this off if
+explanation: *"Changes are applied as soon as you make them. Turn this off if
 you would rather batch changes and apply them yourself."*
 
 ## Where it lives

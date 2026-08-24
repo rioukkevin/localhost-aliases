@@ -29,9 +29,28 @@
  * re-armed by any byte moving either way, so a slow reply is never cut off.
  */
 import type { Socket, SocketHandler } from "bun";
+import type { Route } from "@localhost-aliases/core/types";
 import type { Logger } from "./log.ts";
+import { SNIFF_BYTES, offlineResponse, sniffHttpRequest } from "./offline.ts";
 
 type Side = "client" | "upstream";
+
+/**
+ * State of the one-shot look at the client's first bytes, taken ONLY after an upstream
+ * connect failure. Nothing here runs on the working path.
+ */
+interface Peek {
+  chunks: Uint8Array[];
+  bytes: number;
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
+/**
+ * How long to wait for a silent client to say something before giving up and closing.
+ * A browser has already sent its request line by the time the connect fails, so this is
+ * only reached by clients that connect and wait — which are not HTTP.
+ */
+const PEEK_MS = 250;
 
 interface Conn {
   client: Socket<SpliceSocketData> | null;
@@ -51,6 +70,18 @@ interface Conn {
   lingering: boolean;
   lingerSeconds: number;
   closed: boolean;
+  /** Non-null only while we are deciding whether a dead-upstream client speaks HTTP. */
+  peek: Peek | null;
+  /**
+   * The client must be held open until the offline decision is made.
+   *
+   * Bun reports a failed upstream connect twice: the promise rejects AND the upstream
+   * socket's `close` handler runs. Whichever lands first, `closeWhenDrained` would see a
+   * gone upstream with an empty queue and end the client — before it has said a single
+   * byte, so we would never learn whether it speaks HTTP. This flag is what keeps the
+   * connection alive across that race, and it is cleared the moment the answer is known.
+   */
+  awaitingVerdict: boolean;
 }
 
 interface Link {
@@ -99,6 +130,8 @@ function newConn(lingerSeconds: number): Conn {
     lingering: false,
     lingerSeconds,
     closed: false,
+    peek: null,
+    awaitingVerdict: false,
   };
 }
 
@@ -159,14 +192,24 @@ function pump(conn: Conn, dest: Side): void {
 function closeWhenDrained(conn: Conn, dest: Side): void {
   const sock = conn[dest];
   if (!sock || conn.closeSent[dest]) return;
+  if (dest === "client" && conn.awaitingVerdict) return; // the offline decision is still open
   if (!conn.gone[other(dest)] || conn.pending[dest].length > 0) return;
   conn.closeSent[dest] = true;
   sock.end();
 }
 
+/** Drop a pending peek: the connection it was deciding about is over. */
+function cancelPeek(conn: Conn): void {
+  if (!conn.peek) return;
+  if (conn.peek.timer) clearTimeout(conn.peek.timer);
+  conn.peek = null;
+}
+
 function destroy(conn: Conn): void {
   if (conn.closed) return;
   conn.closed = true;
+  conn.awaitingVerdict = false;
+  cancelPeek(conn);
   cancelRetry(conn, "client");
   cancelRetry(conn, "upstream");
   dropQueue(conn, "client");
@@ -182,7 +225,15 @@ function onEnd(conn: Conn, side: Side): void {
   conn.ended[side] = true;
   pump(conn, other(side)); // deliver whatever is already queued the other way
   if (conn.ended[other(side)]) {
-    destroy(conn); // both directions are finished
+    // Both directions finished — unless we still owe this side something. A client that
+    // half-closes after its request meets an upstream that was already marked ended when
+    // its connect failed, and destroying here would throw away the offline page it is
+    // waiting for. Let the write drain and close itself.
+    if (conn.peek || conn.pending[side].length > 0) {
+      linger(conn);
+      return;
+    }
+    destroy(conn);
     return;
   }
   linger(conn);
@@ -212,17 +263,105 @@ function onClose(link: Link | undefined): void {
   const peer = other(side);
   if (!conn[peer]) {
     conn.closed = true;
+    cancelPeek(conn);
     return;
   }
   pump(conn, peer); // flush the last bytes, then close the peer
   closeWhenDrained(conn, peer);
 }
 
-function handlers(log: Logger): SocketHandler<SpliceSocketData> {
+// ---------------------------------------------------------------------------
+// The failure path: the upstream refused the connection. Everything below runs
+// ONLY after that, and never touches a connection that is working.
+// ---------------------------------------------------------------------------
+
+/**
+ * The dev server is not listening. Decide, from the client's own first bytes, whether it is
+ * something we may answer in HTTP — see offline.ts for why guessing is worse than silence.
+ */
+function upstreamUnreachable(conn: Conn, opts: SpliceOptions): void {
+  conn.gone.upstream = true;
+  conn.ended.upstream = true;
+
+  const routeOf = opts.offlineRoute;
+  if (!routeOf || conn.closed || !conn.client) {
+    conn.awaitingVerdict = false;
+    return destroy(conn);
+  }
+
+  // Whatever the client sent before we paused it is already queued for the upstream that
+  // will now never exist. Those are the first bytes; nothing needs to be read twice.
+  const already = conn.pending.upstream;
+  const peek: Peek = { chunks: [], bytes: 0, timer: null };
+  for (const chunk of already) {
+    peek.chunks.push(chunk);
+    peek.bytes += chunk.byteLength;
+  }
+  dropQueue(conn, "upstream");
+  conn.peek = peek;
+
+  if (decidePeek(conn, opts)) return;
+  // Not enough bytes yet: let the client talk, but not forever.
+  conn.client.resume();
+  peek.timer = setTimeout(() => finishPeek(conn, opts, false), PEEK_MS);
+}
+
+/** True when a verdict was reached and the connection has been dealt with. */
+function decidePeek(conn: Conn, opts: SpliceOptions): boolean {
+  const peek = conn.peek;
+  if (!peek) return true;
+  const verdict = sniffHttpRequest(concat(peek.chunks, peek.bytes));
+  if (verdict === "unknown" && peek.bytes < SNIFF_BYTES) return false;
+  finishPeek(conn, opts, verdict === "http");
+  return true;
+}
+
+/** Serve the page, or close in silence. Either way the peek is over. */
+function finishPeek(conn: Conn, opts: SpliceOptions, isHttp: boolean): void {
+  const peek = conn.peek;
+  if (!peek) return;
+  if (peek.timer) clearTimeout(peek.timer);
+  conn.peek = null;
+  conn.awaitingVerdict = false;
+
+  const route = opts.offlineRoute?.();
+  if (!isHttp || !route) {
+    opts.log(`no upstream and the client is not speaking HTTP; closing without a response`);
+    destroy(conn);
+    return;
+  }
+  opts.log(`no upstream for ${route.hostname}; serving the offline page`);
+  // Reuse the normal write path: it handles a partial write, and closeWhenDrained closes the
+  // client once the whole page has landed (gone.upstream is already true).
+  forward(conn, "client", offlineResponse(route));
+  closeWhenDrained(conn, "client");
+}
+
+function concat(chunks: readonly Uint8Array[], total: number): Uint8Array {
+  if (chunks.length === 1) return chunks[0] as Uint8Array;
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, at);
+    at += chunk.byteLength;
+  }
+  return out;
+}
+
+function handlers(opts: SpliceOptions): SocketHandler<SpliceSocketData> {
+  const log = opts.log;
   return {
     data(socket, chunk) {
       const link = socket.data;
       if (!link) return;
+      // Deciding whether a dead-upstream client speaks HTTP. These bytes are evidence,
+      // not traffic: there is nowhere to forward them to.
+      if (link.conn.peek && link.side === "client") {
+        link.conn.peek.chunks.push(new Uint8Array(chunk));
+        link.conn.peek.bytes += chunk.byteLength;
+        decidePeek(link.conn, opts);
+        return;
+      }
       // Keep a lingering pair alive while it is still moving bytes.
       if (link.conn.lingering) rearmLinger(link.conn);
       forward(link.conn, other(link.side), chunk);
@@ -261,6 +400,12 @@ export interface SpliceOptions {
   targetPort: () => number;
   targetHost?: string;
   /**
+   * The live route, read only when the upstream connect fails, so the offline page names
+   * the alias and the port the user is actually looking at. Omit it and a dead upstream
+   * closes the connection in silence, which is what the raw-splice tests expect.
+   */
+  offlineRoute?: () => Route;
+  /**
    * Seconds a half-closed, idle connection may sit before it is dropped. Bun cannot tell a
    * client that half-closed from one that vanished, so this is what reaps the second case.
    */
@@ -270,7 +415,7 @@ export interface SpliceOptions {
 
 /** Socket handlers for a listener: every accepted connection is spliced to the target. */
 export function spliceHandlers(opts: SpliceOptions): SocketHandler<SpliceSocketData> {
-  const base = handlers(opts.log);
+  const base = handlers(opts);
   const host = opts.targetHost ?? "127.0.0.1";
   const lingerSeconds = opts.lingerSeconds ?? 15;
   return {
@@ -279,6 +424,8 @@ export function spliceHandlers(opts: SpliceOptions): SocketHandler<SpliceSocketD
       const conn = newConn(lingerSeconds);
       client.data = { conn, side: "client" };
       conn.client = client;
+      // Claim the client until we know whether the upstream is there. See `awaitingVerdict`.
+      conn.awaitingVerdict = Boolean(opts.offlineRoute);
       client.pause(); // stay quiet until the upstream socket exists
 
       const port = opts.targetPort();
@@ -291,9 +438,11 @@ export function spliceHandlers(opts: SpliceOptions): SocketHandler<SpliceSocketD
           ...base,
           open(upstream) {
             if (conn.closed || !conn.client) {
+              conn.awaitingVerdict = false;
               upstream.end();
               return;
             }
+            conn.awaitingVerdict = false; // the upstream is there; nothing to decide
             conn.upstream = upstream;
             pump(conn, "upstream");
             conn.client?.resume();
@@ -301,9 +450,7 @@ export function spliceHandlers(opts: SpliceOptions): SocketHandler<SpliceSocketD
         },
       }).catch((err: Error) => {
         opts.log(`connect to ${host}:${port} failed: ${err.message}`);
-        conn.gone.upstream = true;
-        conn.ended.upstream = true;
-        destroy(conn);
+        upstreamUnreachable(conn, opts);
       });
     },
   };

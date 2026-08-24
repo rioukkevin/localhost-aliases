@@ -43,7 +43,11 @@ const PROJECT = {
   aliases: [ALIASES[2]!],
   live: 1,
   hasWorkspaceFile: true,
+  stack: { framework: "Next.js", command: "next dev -p 3000", confidence: "high" as const },
 };
+
+/** The same folder, unrecognised — the case the UI must state rather than paper over. */
+const UNKNOWN_PROJECT = { ...PROJECT, stack: null };
 
 describe("project grid", () => {
   test("draws a card per folder, with the path tilde-abbreviated", () => {
@@ -66,6 +70,30 @@ describe("project grid", () => {
     // The add-a-folder affordance is always the last cell.
     expect(html).toContain('data-testid="add-project"');
     expect(html).toContain('data-testid="folder-picker"');
+  });
+
+  test("the card names the detected stack", () => {
+    const html = renderToStaticMarkup(
+      <ProjectGrid projects={[PROJECT]} loaded linking={false} onAdd={() => {}} onOpen={() => {}} />,
+    );
+    expect(html).toContain('data-testid="project-stack"');
+    expect(html).toContain("Next.js");
+    // The command itself belongs in the drawer, where there is room for it.
+    expect(html).not.toContain("next dev -p 3000");
+  });
+
+  test("an unrecognised folder says so on the card instead of leaving a gap", () => {
+    const html = renderToStaticMarkup(
+      <ProjectGrid
+        projects={[UNKNOWN_PROJECT]}
+        loaded
+        linking={false}
+        onAdd={() => {}}
+        onOpen={() => {}}
+      />,
+    );
+    expect(html).toContain('data-testid="project-stack"');
+    expect(html).toContain("unknown stack");
   });
 
   test("the empty grid teaches what a project is and still offers the picker", () => {
@@ -142,6 +170,29 @@ describe("project drawer", () => {
     expect(open).toContain("Attach an existing alias");
     expect(open).toContain("Rewrite file");
   });
+
+  test("shows the exact command that starts this folder on its port", () => {
+    expect(open).toContain('data-testid="drawer-command"');
+    expect(open).toContain("next dev -p 3000");
+    expect(open).toContain("Next.js");
+  });
+
+  test("an unrecognised folder gets a sentence, never a guessed command", () => {
+    const html = renderToStaticMarkup(
+      <ToastProvider>
+        <ProjectDrawer
+          project={UNKNOWN_PROJECT}
+          aliases={ALIASES}
+          tld="local"
+          writing={null}
+          onClose={() => {}}
+          onWriteWorkspace={async () => {}}
+        />
+      </ToastProvider>,
+    );
+    expect(html).toContain("We do not recognise this folder");
+    expect(html).not.toContain('data-testid="drawer-command"');
+  });
 });
 
 describe("unassigned list", () => {
@@ -168,8 +219,44 @@ describe("unassigned list", () => {
   });
 
   test("carries an inline create form", () => {
-    expect(html).toContain("new alias");
+    expect(html).toContain("New alias");
     expect(html).toContain("Patch it");
     expect(html).toContain('placeholder="myapp"');
+  });
+
+  /**
+   * The reported bug: the form was never broken or hidden, it was unfindable — last thing
+   * on the longest page, labelled with a 10px caption. These three assertions are the fix.
+   */
+  test("the form is findable: a header button, a real heading, and a folder-optional line", () => {
+    expect(html).toContain('data-testid="new-alias"');
+    expect(html).toContain('data-testid="new-alias-form"');
+    expect(html).toContain('<h3 class="text-[13px] font-semibold tracking-tight text-ink">New alias</h3>');
+    expect(html).toContain("A folder is optional");
+  });
+
+  test("the empty list offers the same affordance where the eye already is", () => {
+    const empty = renderToStaticMarkup(
+      <ToastProvider>
+        <UnassignedList
+          aliases={[ALIASES[0]!, ALIASES[2]!]}
+          tld="local"
+          loaded
+          busy={false}
+        />
+      </ToastProvider>,
+    );
+    expect(empty).toContain('data-testid="new-alias-empty"');
+    expect(empty).toContain("Every alias belongs to a folder");
+  });
+
+  test("the header button stays available while a mutation is in flight", () => {
+    const busy = renderToStaticMarkup(
+      <ToastProvider>
+        <UnassignedList aliases={ALIASES} tld="local" loaded busy />
+      </ToastProvider>,
+    );
+    expect(busy).toContain("applying…");
+    expect(busy).toContain('data-testid="new-alias"');
   });
 });

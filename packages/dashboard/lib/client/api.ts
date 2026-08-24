@@ -13,6 +13,9 @@
  *   POST   /api/projects/link          { path, aliasIds?, ... }    -> LinkProjectResult
  *   POST   /api/projects/workspace     { path }                    -> { path, workspaceFile }
  *   POST   /api/pick-folder                                        -> { path, cancelled }
+ *   GET    /api/offline                ?host=…                     -> OfflineView
+ *   GET    /api/launch-at-login                                    -> LaunchAtLoginState
+ *   PUT    /api/launch-at-login        { action }                  -> LaunchAtLoginState
  *   GET    /api/onboarding                                         -> OnboardingPayload
  *   POST   /api/onboarding             { action, ... }             -> OnboardingPayload
  *   PATCH  /api/settings               { tld?, dashboardPort?, https?, autoApply? } -> { config, restartRequired }
@@ -221,9 +224,165 @@ export async function deleteAlias(id: string): Promise<void> {
 // Projects
 // ---------------------------------------------------------------------------
 
-export async function fetchProjects(): Promise<Project[]> {
-  const body = await request<{ projects?: Project[] }>("/api/projects");
-  return body.projects ?? [];
+/** What we think starts a project, from packages/core/src/stack.ts. Advisory. */
+export interface DetectedStack {
+  framework: string;
+  command: string;
+  confidence: "high" | "low";
+}
+
+/**
+ * Fails soft in both directions: a server that does not send `stack` (an older build)
+ * and a server that sends something unrecognisable both land on `null`, which every
+ * surface renders as "we do not recognise this folder" — never as a guessed framework.
+ */
+export function toDetectedStack(value: unknown): DetectedStack | null {
+  if (typeof value !== "object" || value === null) return null;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.framework !== "string" || raw.framework === "") return null;
+  if (typeof raw.command !== "string" || raw.command === "") return null;
+  return {
+    framework: raw.framework,
+    command: raw.command,
+    confidence: raw.confidence === "high" ? "high" : "low",
+  };
+}
+
+export interface ProjectPayload extends Project {
+  stack: DetectedStack | null;
+}
+
+export async function fetchProjects(): Promise<ProjectPayload[]> {
+  const body = await request<{ projects?: Array<Project & { stack?: unknown }> }>("/api/projects");
+  return (body.projects ?? []).map((p) => ({ ...p, stack: toDetectedStack(p.stack) }));
+}
+
+// ---------------------------------------------------------------------------
+// Offline page
+// ---------------------------------------------------------------------------
+
+export interface OfflineAlias {
+  id: string;
+  name: string;
+  hostname: string;
+  url: string;
+  targetPort: number;
+  ip: string;
+  projectPath: string | null;
+  enabled: boolean;
+  reserved: boolean;
+}
+
+export interface OfflineView {
+  hostname: string;
+  known: boolean;
+  alias: OfflineAlias | null;
+  stack: DetectedStack | null;
+  listening: boolean;
+  checkedAt: string;
+}
+
+export async function fetchOffline(host: string): Promise<OfflineView> {
+  const body = await request<Partial<OfflineView>>(
+    `/api/offline?host=${encodeURIComponent(host)}`,
+  );
+  return {
+    hostname: typeof body.hostname === "string" ? body.hostname : host,
+    known: body.known === true,
+    alias: body.alias ?? null,
+    stack: toDetectedStack(body.stack),
+    listening: body.listening === true,
+    checkedAt: typeof body.checkedAt === "string" ? body.checkedAt : new Date().toISOString(),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Launch at login
+// ---------------------------------------------------------------------------
+
+/** `SMAppService.Status` as apps/tray/Sources/LoginItem.swift names it, plus "not told". */
+export type LaunchAtLoginStatus =
+  | "enabled"
+  | "requiresApproval"
+  | "notRegistered"
+  | "notFound"
+  | "unknown";
+
+export type LaunchAtLoginAction = "enable" | "disable" | "refresh";
+
+export interface LaunchAtLoginState {
+  status: LaunchAtLoginStatus;
+  /** The tray's own boolean. `null` while unknown — an absent answer is not `false`. */
+  enabled: boolean | null;
+  canToggle: boolean | null;
+  needsSystemSettings: boolean;
+  systemSettingsUrl: string | null;
+  updatedAt: string | null;
+  pending: boolean;
+  requested: LaunchAtLoginAction | null;
+}
+
+const LAUNCH_STATES: readonly string[] = ["enabled", "requiresApproval", "notRegistered", "notFound"];
+const LAUNCH_ACTIONS: readonly string[] = ["enable", "disable", "refresh"];
+
+export const UNKNOWN_LAUNCH: LaunchAtLoginState = {
+  status: "unknown",
+  enabled: null,
+  canToggle: null,
+  needsSystemSettings: false,
+  systemSettingsUrl: null,
+  updatedAt: null,
+  pending: false,
+  requested: null,
+};
+
+/**
+ * Anything the menu-bar app has not answered — a missing field, an older build, a value
+ * from a future one — is "unknown", and unknown carries `enabled: null`. It is never
+ * `false`: that would be a confident claim about the user's Mac made because a file was
+ * absent.
+ */
+export function toLaunchAtLogin(value: unknown): LaunchAtLoginState {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return UNKNOWN_LAUNCH;
+  const raw = value as Record<string, unknown>;
+  const status =
+    typeof raw.status === "string" && LAUNCH_STATES.includes(raw.status)
+      ? (raw.status as LaunchAtLoginStatus)
+      : "unknown";
+  if (status === "unknown") {
+    return {
+      ...UNKNOWN_LAUNCH,
+      pending: raw.pending === true,
+      requested:
+        typeof raw.requested === "string" && LAUNCH_ACTIONS.includes(raw.requested)
+          ? (raw.requested as LaunchAtLoginAction)
+          : null,
+    };
+  }
+  return {
+    status,
+    enabled: typeof raw.enabled === "boolean" ? raw.enabled : status === "enabled",
+    canToggle: typeof raw.canToggle === "boolean" ? raw.canToggle : true,
+    needsSystemSettings: raw.needsSystemSettings === true || status === "requiresApproval",
+    systemSettingsUrl:
+      typeof raw.systemSettingsUrl === "string" && raw.systemSettingsUrl !== ""
+        ? raw.systemSettingsUrl
+        : null,
+    updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : null,
+    pending: raw.pending === true,
+    requested:
+      typeof raw.requested === "string" && LAUNCH_ACTIONS.includes(raw.requested)
+        ? (raw.requested as LaunchAtLoginAction)
+        : null,
+  };
+}
+
+export async function fetchLaunchAtLogin(): Promise<LaunchAtLoginState> {
+  return toLaunchAtLogin(await request<unknown>("/api/launch-at-login"));
+}
+
+export async function setLaunchAtLogin(action: LaunchAtLoginAction): Promise<LaunchAtLoginState> {
+  return toLaunchAtLogin(await send<unknown>("/api/launch-at-login", "PUT", { action }));
 }
 
 export interface LinkProjectResult {

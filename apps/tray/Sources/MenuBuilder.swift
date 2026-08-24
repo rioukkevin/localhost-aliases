@@ -6,6 +6,7 @@ import AppKit
     func openAlias(_ sender: Any?)
     func reapplyAliases(_ sender: Any?)
     func restartDashboard(_ sender: Any?)
+    func openLoginItemSettings(_ sender: Any?)
     func uninstallEverything(_ sender: Any?)
     func quitApp(_ sender: Any?)
 }
@@ -50,14 +51,28 @@ enum MenuBuilder {
 
         menu.addItem(.separator())
 
+        // One item, two jobs, because there are only two situations. With the agent up,
+        // nothing here is routine — it reconciles by itself. With it down, this is the one
+        // admin prompt, and the user has to be able to ask for it explicitly.
         let reapply = NSMenuItem(
-            title: "Re-apply Aliases…", action: #selector(MenuActions.reapplyAliases(_:)),
-            keyEquivalent: "")
+            title: AgentSupervisor.actionTitle(agentRunning: state.agentIsRunning),
+            action: #selector(MenuActions.reapplyAliases(_:)), keyEquivalent: "")
         reapply.target = target
-        reapply.toolTip = "Asks for your administrator password once, then updates /etc/hosts, "
-            + "the lo0 addresses and the forwarder."
+        reapply.toolTip = AgentSupervisor.actionTooltip(agentRunning: state.agentIsRunning)
         reapply.isEnabled = !state.privilegedBusy
         menu.addItem(reapply)
+
+        // Only ever shown for `.requiresApproval`. macOS accepted the registration but left it
+        // switched off, so the app looks enabled and silently never launches. This is the one
+        // login-item state a user cannot fix from inside the app.
+        if state.loginItem.needsSystemSettings {
+            let approve = NSMenuItem(
+                title: "Approve Launch at Login…",
+                action: #selector(MenuActions.openLoginItemSettings(_:)), keyEquivalent: "")
+            approve.target = target
+            approve.toolTip = state.loginItem.detail
+            menu.addItem(approve)
+        }
 
         let restart = NSMenuItem(
             title: "Restart Dashboard", action: #selector(MenuActions.restartDashboard(_:)),

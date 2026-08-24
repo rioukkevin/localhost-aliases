@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { AliasView, CreateAliasInput, ValidationIssue } from "@localhost-aliases/core/types";
 import { ApiError } from "../../lib/client/api.ts";
 import { countLabel } from "../../lib/client/format.ts";
-import { Spinner } from "../ui/Button.tsx";
+import { Button, Spinner } from "../ui/Button.tsx";
+import { IconPlus } from "../ui/Icons.tsx";
 import { EmptyState } from "../ui/EmptyState.tsx";
 import { Panel } from "../ui/Panel.tsx";
 import { PatchCable } from "../ui/PatchCable.tsx";
@@ -29,6 +30,16 @@ export interface UnassignedListProps {
  *
  * The snapshot arrives as props rather than from the store: the page is the one place
  * wired to the poll, which keeps this component a pure function of what it is given.
+ *
+ * WHY THERE IS A BUTTON IN THE HEADER. The create form has always been here, in the
+ * footer, and it has always worked. What it did not have was a way of being FOUND: it is
+ * the last thing on the longest page in the app, its only heading was a 10px `text-faint`
+ * caption that reads as a legend rather than a control, and the one add-shaped affordance
+ * above the fold belonged to the projects grid ("Add a project"). A user scanning the page
+ * could reasonably conclude that an alias without a folder was not a thing you could make.
+ * So the panel header now says "New alias" where the eye already is, and it scrolls to the
+ * form and focuses its first field rather than opening a second one — two forms that both
+ * create aliases is exactly the duplication this component was written to avoid.
  */
 export function UnassignedList({ aliases, tld, loaded, busy }: UnassignedListProps) {
   const actions = useAliasActions();
@@ -39,6 +50,15 @@ export function UnassignedList({ aliases, tld, loaded, busy }: UnassignedListPro
   // Remounting the form is the whole reset: no field state survives a successful create.
   const [formKey, setFormKey] = useState(0);
   const [serverIssues, setServerIssues] = useState<ValidationIssue[]>([]);
+  const formRef = useRef<HTMLDivElement>(null);
+
+  /** Take the user to the form that already exists, rather than opening a second one. */
+  function focusForm() {
+    const root = formRef.current;
+    if (!root) return;
+    root.scrollIntoView({ behavior: "smooth", block: "center" });
+    root.querySelector("input")?.focus({ preventScroll: true });
+  }
 
   const loose = aliases.filter((a) => !a.projectPath && !a.reserved);
   const reserved = aliases.filter((a) => !a.projectPath && a.reserved);
@@ -76,17 +96,27 @@ export function UnassignedList({ aliases, tld, loaded, busy }: UnassignedListPro
       padded={false}
       data-testid="unassigned-list"
       aside={
-        busy ? (
-          <span role="status" className="flex items-center gap-1.5 text-[11px] text-accent">
-            <Spinner />
-            applying…
-          </span>
-        ) : null
+        <>
+          {busy ? (
+            <span role="status" className="flex items-center gap-1.5 text-[11px] text-accent">
+              <Spinner />
+              applying…
+            </span>
+          ) : null}
+          <Button size="sm" onClick={focusForm} data-testid="new-alias">
+            <IconPlus />
+            New alias
+          </Button>
+        </>
       }
       footer={
-        <div className="flex flex-col gap-3">
-          <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-faint">
-            new alias — 127.0.0.x:80 → 127.0.0.1:port
+        <div className="flex flex-col gap-3" ref={formRef} data-testid="new-alias-form">
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+            <h3 className="text-[13px] font-semibold tracking-tight text-ink">New alias</h3>
+            <p className="mono text-[11px] text-faint">127.0.0.x:80 → 127.0.0.1:port</p>
+          </div>
+          <p className="max-w-2xl text-[12.5px] leading-relaxed text-muted">
+            A folder is optional. Leave it empty and the name lives in this list.
           </p>
           <AliasEditor
             key={formKey}
@@ -119,6 +149,12 @@ export function UnassignedList({ aliases, tld, loaded, busy }: UnassignedListPro
           {loose.length === 0 ? (
             <EmptyState
               title="Every alias belongs to a folder"
+              actions={
+                <Button variant="primary" size="sm" onClick={focusForm} data-testid="new-alias-empty">
+                  <IconPlus />
+                  New alias
+                </Button>
+              }
               figure={
                 <div className="flex items-center gap-3 opacity-70">
                   <span className="mono text-[15px] text-faint">myapp.{tld}</span>
@@ -127,8 +163,9 @@ export function UnassignedList({ aliases, tld, loaded, busy }: UnassignedListPro
                 </div>
               }
             >
-              Names patched here have no project — which is perfectly normal. Add one below
-              and it stays in this list until you give it a folder.
+              Names patched here have no project — which is perfectly normal. Use{" "}
+              <span className="text-ink">New alias</span> above, or the form at the bottom of
+              this panel, and the name stays in this list until you give it a folder.
             </EmptyState>
           ) : (
             <AliasRows rows={loose} legend {...rowProps} />

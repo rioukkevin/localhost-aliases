@@ -2,6 +2,7 @@
 
 import { AliasDefaults } from "../settings/AliasDefaults.tsx";
 import { AutoApplySection } from "../settings/AutoApply.tsx";
+import { LaunchAtLoginSection } from "../settings/LaunchAtLogin.tsx";
 import { McpSection } from "../settings/McpSection.tsx";
 import { UninstallSection } from "../settings/UninstallSection.tsx";
 import { LinkButton } from "../LinkButton.tsx";
@@ -10,9 +11,9 @@ import { Panel } from "../ui/Panel.tsx";
 import { StatusDetail } from "./StatusDetail.tsx";
 
 /**
- * Everything global, in one column that comes in from the left: what the machine
- * is doing right now, whether a change applies itself, the defaults every alias
- * inherits, the MCP server, the way back into setup, and the way out.
+ * Everything global, in one column that comes in from the left: what the machine is doing
+ * right now, whether the root agent starts itself, whether the app opens at login, the
+ * defaults every alias inherits, the MCP server, the way back into setup, and the way out.
  */
 export function SettingsDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   return (
@@ -30,6 +31,8 @@ export function SettingsDrawer({ open, onClose }: { open: boolean; onClose: () =
         </Panel>
 
         <AutoApplySection />
+
+        <LaunchAtLoginSection />
 
         <AliasDefaults />
 

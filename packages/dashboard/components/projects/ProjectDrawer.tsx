@@ -12,6 +12,7 @@ import { useAliasApply } from "../aliases/alias-apply.ts";
 import { useAliasActions } from "../aliases/useAliasActions.ts";
 import { Button } from "../ui/Button.tsx";
 import { Chip } from "../ui/Chip.tsx";
+import { CodeBlock } from "../ui/CodeBlock.tsx";
 import { Drawer } from "../ui/Drawer.tsx";
 import { useToast } from "../ui/Toast.tsx";
 import type { ProjectSummary } from "./useProjects.ts";
@@ -110,6 +111,36 @@ export function ProjectDrawer({
               </Chip>
             ) : null}
           </div>
+
+          {/* What we think runs here, and the command that starts it on this folder's own
+              port. Read-only detection: nothing is executed and nothing is written into
+              the repository. An unrecognised folder says so instead of guessing. */}
+          <section data-testid="drawer-stack">
+            {project.stack ? (
+              <>
+                <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <Chip tone="muted">{project.stack.framework}</Chip>
+                  {project.stack.confidence === "low" ? (
+                    <span className="text-[11px] text-faint">
+                      inferred from the dependencies, not from a script
+                    </span>
+                  ) : null}
+                </div>
+                <CodeBlock
+                  label="starts this project on the port these aliases point at"
+                  value={project.stack.command}
+                  what="command"
+                  data-testid="drawer-command"
+                />
+              </>
+            ) : (
+              <p className="text-[12.5px] leading-relaxed text-muted">
+                We do not recognise this folder, so there is no start command to show. That is
+                the honest answer: a guessed command that starts nothing, or starts it on the
+                wrong port, would be worse than none.
+              </p>
+            )}
+          </section>
 
           {/* No negative margins: the drawer owns its padding and we do not know it. */}
           <section className="border border-hairline @container">

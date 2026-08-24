@@ -44,9 +44,10 @@ export function createServer(client: DashboardClient = new DashboardClient()): M
     {
       title: "Create an alias",
       description:
-        "Create http://<name>.<tld> pointing at 127.0.0.1:<port>. Triggers ONE macOS admin " +
-        "prompt the user must accept (it adds a loopback IP and an /etc/hosts line). " +
-        "http only: TLS cannot be terminated for project aliases.",
+        "Create http://<name>.<tld> pointing at 127.0.0.1:<port>. It adds a loopback IP and " +
+        "an /etc/hosts line: with the app's root agent running that needs no admin prompt, and " +
+        "without it the result names the prompt the user must accept \u2014 read the result, do not " +
+        "assume. http only: TLS cannot be terminated for project aliases.",
       inputSchema: {
         name: z
           .string()
@@ -65,8 +66,9 @@ export function createServer(client: DashboardClient = new DashboardClient()): M
     {
       title: "Delete an alias",
       description:
-        "Delete an alias by hostname, name or id. Removes its /etc/hosts line and loopback IP " +
-        "behind one macOS admin prompt. The reserved dashboard alias cannot be deleted.",
+        "Delete an alias by hostname, name or id. Removes its /etc/hosts line and loopback IP. " +
+        "With the app's root agent running this needs no admin prompt; without it, the result " +
+        "says which prompt is pending. The reserved dashboard alias cannot be deleted.",
       inputSchema: {
         alias: z.string().describe(`Hostname (myapp.${DEFAULT_TLD}), bare name (myapp) or alias id.`),
       },
@@ -82,7 +84,7 @@ export function createServer(client: DashboardClient = new DashboardClient()): M
       description:
         "Attach a project folder to an alias, and import any aliases the folder declares in " +
         ".localhost-aliases.json. Linking alone is metadata; importing declared aliases can " +
-        "create new ones, which needs the admin prompt.",
+        "create new ones, which needs an admin prompt only when the root agent is not running.",
       inputSchema: {
         projectPath: z.string().describe("Absolute path of the project folder."),
         alias: z

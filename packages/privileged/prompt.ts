@@ -258,11 +258,24 @@ export interface CliOptions {
   noForwarder: boolean;
   /** Print the argv and env instead of raising a prompt. Nothing runs as root. */
   dryRun: boolean;
+  /**
+   * Do not prompt if the root agent is already running: it watches desired-state.json and
+   * has already done, or is about to do, whatever this apply would have done. This is what
+   * makes the launch prompt a ONCE-per-session thing rather than a once-per-change one.
+   * Ignored for `uninstall`, which must run as root whatever else is up.
+   */
+  ifNeeded: boolean;
 }
 
 /** Accepts both spellings the tray may send: `--uninstall` and a bare `uninstall`. */
 export function parseCliArgs(argv: readonly string[]): CliOptions {
-  const options: CliOptions = { action: "apply", restartForwarder: false, noForwarder: false, dryRun: false };
+  const options: CliOptions = {
+    action: "apply",
+    restartForwarder: false,
+    noForwarder: false,
+    dryRun: false,
+    ifNeeded: false,
+  };
   for (const arg of argv) {
     switch (arg) {
       case "uninstall": case "--uninstall": options.action = "uninstall"; break;
@@ -270,10 +283,41 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
       case "--restart-forwarder": options.restartForwarder = true; break;
       case "--no-forwarder": options.noForwarder = true; break;
       case "--dry-run": case "--print-only": options.dryRun = true; break;
+      case "--if-needed": options.ifNeeded = true; break;
       default: throw new Error(`Unknown argument ${JSON.stringify(arg)}.`);
     }
   }
   return options;
+}
+
+/**
+ * Is the root agent alive right now?
+ *
+ * The agent publishes its pid in forwarder-status.json; the file alone proves nothing,
+ * because a crash leaves it behind. Signal 0 delivers nothing and only asks whether the pid
+ * exists — and EPERM is a YES here, because the process existing and belonging to root is
+ * exactly what the agent is.
+ *
+ * A false answer costs one prompt. A false TRUE would mean the user's change never lands,
+ * so the check errs toward prompting.
+ */
+export async function agentIsRunning(statusPath?: string): Promise<boolean> {
+  try {
+    const { forwarderStatusPath } = await import("@localhost-aliases/core/paths");
+    const path = statusPath ?? forwarderStatusPath();
+    const raw = JSON.parse(await Bun.file(path).text()) as { pid?: unknown };
+    const pid = raw?.pid;
+    if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 1) return false;
+    if (pid === process.pid) return false; // our own pid is not evidence of an agent
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (err) {
+      return (err as NodeJS.ErrnoException).code === "EPERM";
+    }
+  } catch {
+    return false; // no file, unreadable, or not JSON: assume not running and prompt
+  }
 }
 
 /**
@@ -322,8 +366,18 @@ export async function cliMain(argv: readonly string[]): Promise<number> {
   try {
     options = parseCliArgs(argv);
   } catch (err) {
-    process.stderr.write(`${(err as Error).message}\nusage: prompt.ts [apply|uninstall] [--restart-forwarder] [--no-forwarder] [--dry-run]\n`);
+    process.stderr.write(`${(err as Error).message}\nusage: prompt.ts [apply|uninstall] [--restart-forwarder] [--no-forwarder] [--if-needed] [--dry-run]\n`);
     return 2;
+  }
+
+  // The root-agent model, on the command line (docs/AGENT.md §1). With the agent up there is
+  // nothing for a prompt to do: it is already watching desired-state.json and will reconcile
+  // whatever the caller just wrote. Checked BEFORE the request is built, so no dialog is even
+  // prepared. `--dry-run` still prints, because printing is what it is for; an uninstall
+  // ignores this entirely, since it must stop the agent rather than ask it for a favour.
+  if (options.ifNeeded && options.action === "apply" && !options.dryRun && (await agentIsRunning())) {
+    process.stdout.write("LA_RESULT status=ok reason=agent-running prompt=skipped\n");
+    return 0;
   }
 
   const request = await buildCliRequest(options);

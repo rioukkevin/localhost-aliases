@@ -15,6 +15,12 @@ export interface ProjectSummary {
   aliases: AliasView[];
   live: number;
   hasWorkspaceFile: boolean;
+  /**
+   * What we think starts this folder, from core's read-only detection. `null` is a real
+   * answer meaning "we do not recognise it", and the card says exactly that rather than
+   * naming a framework it is not sure about.
+   */
+  stack: api.DetectedStack | null;
 }
 
 export interface ProjectsHandle {
@@ -38,6 +44,8 @@ export function useProjects(): ProjectsHandle {
   const toast = useToast();
 
   const [workspaceFiles, setWorkspaceFiles] = useState<Record<string, boolean>>({});
+  // Detection is a server read, so it arrives with the folder list rather than the poll.
+  const [stacks, setStacks] = useState<Record<string, api.DetectedStack | null>>({});
   // Every folder we have been told about, so a project you just added — or just emptied —
   // does not vanish from the grid under your cursor.
   const [known, setKnown] = useState<string[]>([]);
@@ -48,6 +56,7 @@ export function useProjects(): ProjectsHandle {
     try {
       const projects = await api.fetchProjects();
       setWorkspaceFiles(Object.fromEntries(projects.map((p) => [p.path, p.hasWorkspaceFile])));
+      setStacks(Object.fromEntries(projects.map((p) => [p.path, p.stack])));
       setKnown((current) => [...new Set([...current, ...projects.map((p) => p.path)])]);
     } catch {
       // Best-effort: the folder list itself is already in the polled aliases.
@@ -74,9 +83,10 @@ export function useProjects(): ProjectsHandle {
         aliases: owned,
         live: owned.filter((a) => a.status === "up").length,
         hasWorkspaceFile: workspaceFiles[path] ?? false,
+        stack: stacks[path] ?? null,
       }))
       .sort((a, b) => a.name.localeCompare(b.name) || a.path.localeCompare(b.path));
-  }, [aliases, known, workspaceFiles]);
+  }, [aliases, known, workspaceFiles, stacks]);
 
   /**
    * Choosing a folder does the obvious thing on its own: if the folder already declares
@@ -91,6 +101,8 @@ export function useProjects(): ProjectsHandle {
         await refreshStatus();
         setKnown((current) => [...new Set([...current, path])]);
         setWorkspaceFiles((current) => ({ ...current, [path]: result.project.hasWorkspaceFile }));
+        // The link response does not carry detection; the folder list does. Ask for it.
+        void reload();
         if (result.created.length > 0) {
           toast.push({
             tone: "success",
@@ -110,7 +122,7 @@ export function useProjects(): ProjectsHandle {
         setLinking(false);
       }
     },
-    [toast],
+    [reload, toast],
   );
 
   const writeWorkspace = useCallback(

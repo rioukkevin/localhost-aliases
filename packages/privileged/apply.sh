@@ -4,13 +4,20 @@
 #
 #   apply.sh [--restart-forwarder] [--no-forwarder] <desired-state.json>
 #
-# Run as root, once, behind one macOS admin prompt. Idempotent: running it twice
-# in a row changes nothing the second time. It does exactly four things:
+# Run as root, once, behind ONE macOS admin prompt — at app launch. Idempotent: running
+# it twice in a row changes nothing the second time. It does exactly four things:
 #
 #   1. add missing 127.0.0.2-254 aliases to lo0, remove ours that are no longer wanted
 #   2. rewrite the managed block in /etc/hosts, atomically, markers-only
 #   3. flush DNS
-#   4. start the root TCP forwarder, detached, if it is not already running
+#   4. start the root AGENT (which is also the TCP forwarder), detached, if it is not
+#      already running
+#
+# Step 4 is what changed in the root-agent model (docs/AGENT.md §1). The agent keeps
+# watching desired-state.json after this script exits and redoes steps 1-3 itself whenever
+# that file changes, so adding or removing an alias never raises a second prompt. This
+# script stays as the explicit manual path for when the agent is NOT running — a reboot, a
+# crash, an uninstall — and as the thing that gets it running in the first place.
 #
 # Nothing is installed. There is no LaunchDaemon, no file outside /etc/hosts, lo0,
 # the caller's own config directory and the log directory. See README.md.
@@ -23,6 +30,9 @@
 #   LA_LOG_DIR      default $LA_CONFIG_DIR/logs
 #   LA_OWNER        optional "uid:gid"; files root creates in the user's dirs are given back
 #   LA_MANAGED_IPS  optional space-separated allow-list restricting lo0 removals further
+#
+# LA_HOSTS_PATH and LA_MANAGED_IPS are also EXPORTED to the agent, so it reconciles against
+# the same hosts file and inherits the same "only these addresses are ours" restriction.
 #
 # Output: exactly one line on stdout, `LA_RESULT status=... key=value ...`.
 # Everything else goes to stderr and to $LA_LOG_DIR/privileged.log. On failure the
@@ -211,7 +221,12 @@ FORWARDER_STATE=skipped
 FORWARDER_PID=0
 
 if [ "$WANT_FORWARDER" = "1" ]; then
-  export LA_CONFIG_DIR LA_LOG_DIR="$LOG_DIR"
+  # The agent inherits nothing from a login shell: as root under osascript there is no
+  # useful environment, so everything it needs is exported here, explicitly.
+  #   LA_HOSTS_PATH  - it must edit the same file this script just edited
+  #   LA_MANAGED_IPS - it must be no freer than this script about what it may remove
+  export LA_CONFIG_DIR LA_LOG_DIR="$LOG_DIR" LA_HOSTS_PATH="$HOSTS_PATH"
+  if [ -n "${LA_MANAGED_IPS:-}" ]; then export LA_MANAGED_IPS; fi
   running="$(la_forwarder_pid "$STATUS_FILE" "$LA_FORWARDER" || true)"
   ips_changed=0
   [ "$IPS_ADDED" -gt 0 ] && ips_changed=1
@@ -237,8 +252,10 @@ if [ "$WANT_FORWARDER" = "1" ]; then
   else
     FORWARDER_STATE=running
     FORWARDER_PID="$running"
-    # Ports live in routes.json, which the forwarder watches on its own. Nudge it so
-    # a route it could not bind earlier is retried now that lo0 is correct.
+    # It is already up and watching. Nudge both files so a route it could not bind earlier
+    # is retried now that lo0 is correct: desired-state.json for the agent, routes.json for
+    # a plain forwarder started without reconciliation.
+    if [ -f "$STATE_FILE" ]; then touch "$STATE_FILE" 2>/dev/null || true; fi
     if [ -f "$ROUTES_FILE" ]; then touch "$ROUTES_FILE" 2>/dev/null || true; fi
   fi
 fi

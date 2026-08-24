@@ -18,16 +18,23 @@ DEPLOY    ?= 13.0
 SDK       := $(shell xcrun --show-sdk-path --sdk macosx)
 SOURCES   := $(wildcard Sources/*.swift)
 
-# The watcher harness links only the files it needs. PrivilegedApply.swift — the one file that
-# can raise a password dialog — is deliberately NOT in this list, so `make test` cannot prompt.
+# The harness links only the files it needs, and only AppKit-free ones (it builds against
+# Foundation alone). Two files are deliberately NOT in this list, so `make test` can neither
+# raise a password dialog nor touch the real login item:
+#   Sources/PrivilegedApply.swift    the only `with administrator privileges` call
+#   Sources/LoginItemService.swift   the only SMAppService register()/unregister() calls
+# Both are injected into the code below as closures, so every decision is still exercised.
 TEST_SOURCES := Sources/Paths.swift Sources/Logger.swift Sources/ApplyRequestWatcher.swift \
-	tests/main.swift
+	Sources/TerminationCoordinator.swift Sources/AgentSupervisor.swift Sources/LoginItem.swift \
+	tests/main.swift tests/TerminationTests.swift tests/AgentTests.swift \
+	tests/LoginItemTests.swift
 
 SWIFTFLAGS := -O -wmo \
 	-target arm64-apple-macos$(DEPLOY) \
 	-sdk $(SDK) \
 	-framework AppKit \
-	-framework Foundation
+	-framework Foundation \
+	-framework ServiceManagement
 
 help:
 	@echo "make build   compile $(BUILD)/$(NAME)"

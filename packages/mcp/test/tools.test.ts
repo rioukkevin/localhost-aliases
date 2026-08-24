@@ -203,12 +203,25 @@ describe("get_usage_instructions", () => {
     const out = body(await tools.usageInstructions());
     expect(out).toContain("http:// only");
     expect(out).toContain("ifconfig lo0 alias");
-    expect(out).toContain("idempotent batch behind a single macOS admin prompt");
-    expect(out).toContain("Changing only the target port does NOT prompt");
+    expect(out).toContain("ONCE PER APP LAUNCH");
+    expect(out).toContain("ROOT AGENT");
+    expect(out).toContain("NO further prompt");
     expect(out).toContain(".localhost-aliases.json");
     expect(out).toContain("127.0.0.254");
     expect(out).toContain("not an HTTP proxy");
     expect(out).toContain("no LaunchDaemon and no sudo");
+  });
+
+  // The model reads this text and repeats it to the user. Copy from the per-change era
+  // would have it promise a password dialog that no longer appears.
+  test("does not promise a prompt per alias change, and discloses the standing-root tradeoff", async () => {
+    const out = body(await tools.usageInstructions());
+    expect(out).not.toContain("idempotent batch behind a single macOS admin prompt");
+    expect(out).not.toContain("therefore prompts once");
+    expect(out).not.toContain("creating and deleting aliases are not");
+    expect(out).toContain("writable by the user's own account and a root process acts on it");
+    expect(out).toContain("never executes");
+    expect(out).toContain("Quitting the app leaves nothing running as root");
   });
 
   test("derives its paths instead of hardcoding them", async () => {

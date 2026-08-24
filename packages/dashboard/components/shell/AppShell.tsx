@@ -21,8 +21,12 @@ import { useSetupGate } from "./useSetupGate.ts";
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() ?? "/";
   const bare = pathname.startsWith("/onboarding");
+  // /offline is reached from a 503 the root agent served for a name that already
+  // resolves, so setup has plainly run. Bouncing that arrival into the setup flow would
+  // throw away the one thing the user came for: why their dev server did not answer.
+  const offline = pathname.startsWith("/offline");
   const [settingsOpen, setSettingsOpen] = useState(false);
-  useSetupGate(!bare);
+  useSetupGate(!bare && !offline);
 
   // Leaving the page closes the drawer: coming back from setup to a drawer you
   // never reopened would be the app remembering something you did not ask it to.

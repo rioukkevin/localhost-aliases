@@ -12,10 +12,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MenuAc
     private var heartbeat: Heartbeat!
     private var poller: StatusPoller!
     private var applyWatcher: ApplyRequestWatcher!
+    private var loginItemWatcher: LoginItemWatcher!
+    private var termination: TerminationCoordinator?
     private var signalSources: [DispatchSourceSignal] = []
 
     private var state = TrayState()
     private var isTerminating = false
+    /// Last agent decision we logged, so a 3s poll cannot fill the log with the same line.
+    private var lastAgentDecision: AgentStartDecision?
 
     // MARK: - Lifecycle
 
@@ -45,7 +49,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MenuAc
             self.state.config = config
             self.state.system = snapshot
             self.state.aliasUp = statuses
+            // A completed poll is an observation either way: "no agent" is an answer, not a
+            // silence. Everything about the launch prompt hangs off this.
+            self.state.agent = AgentObservation.seen(running: snapshot.forwarderRunning)
             self.refreshIcon()
+            self.considerStartingAgent()
         }
         poller.start()
 
@@ -60,16 +68,90 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MenuAc
                         PrivilegedRunOutcome(ok: false, cancelled: false, output: "tray is shutting down"))
                     return
                 }
-                self.runPrivileged(kind == .uninstall ? .uninstall : .apply) { result in
-                    completion(
-                        PrivilegedRunOutcome(
-                            ok: result.ok, cancelled: result.cancelled, output: result.output))
-                }
+                self.serveRequest(kind, completion: completion)
             })
         applyWatcher.start()
 
+        // Launch at login. Reading the status prompts for nothing and changes nothing; the
+        // watcher is the only route to register(), and it needs a fresh request id written by
+        // an explicit click in the dashboard's settings drawer. See LoginItemService.swift.
+        loginItemWatcher = LoginItemWatcher(
+            log: log,
+            read: { LoginItemService.currentState() },
+            apply: { [log] action, done in
+                LoginItemService.apply(action, log: log, completion: done)
+            },
+            onStateChange: { [weak self] newState in
+                guard let self else { return }
+                self.state.loginItem = newState
+                self.log.log("login-item: \(newState.rawValue) — \(newState.headline)")
+            })
+        loginItemWatcher.start()
+        state.loginItem = loginItemWatcher.state
+
         installSignalHandlers()
         openDashboardOnFirstRun()
+    }
+
+    // MARK: - The root agent
+
+    /// docs/AGENT.md §1: ONE admin prompt, at app launch, starts the long-lived root agent.
+    /// After that it reconciles desired-state.json on its own and nothing here prompts again.
+    ///
+    /// Called from every poll, but `AgentSupervisor.decideStart` is what makes that safe:
+    /// `.start` is reachable only once per session, only after a real observation, only when
+    /// the user has already been onboarded, and never while another prompt is on screen.
+    private func considerStartingAgent() {
+        let decision = AgentSupervisor.decideStart(
+            observation: state.agent,
+            hasConfig: FileManager.default.fileExists(atPath: Paths.configPath),
+            hasAliases: !state.config.aliases.isEmpty,
+            askedThisSession: state.agentPromptRaised,
+            busy: state.privilegedBusy,
+            autoStartEnabled: AgentSupervisor.autoStartEnabled)
+
+        if decision != lastAgentDecision {
+            lastAgentDecision = decision
+            log.log("agent: \(decision)")
+        }
+        guard decision == .start else { return }
+
+        // Set BEFORE the run, exactly as ApplyRequestWatcher does: a poll that fires while the
+        // password dialog is on screen must not be able to start a second one.
+        state.agentPromptRaised = true
+        log.log("agent: not running — raising the single admin prompt that starts it")
+        runPrivileged(.apply)
+    }
+
+    /// The dashboard asked for privileged work. Under the root-agent model most of those
+    /// requests need no password at all: the agent is already running as root and watching
+    /// `desired-state.json`, which the dashboard has already written.
+    private func serveRequest(
+        _ kind: PrivilegedRequestKind, completion: @escaping (PrivilegedRunOutcome) -> Void
+    ) {
+        // Read fresh, not from the 3s poll: the answer decides whether a user gets a password
+        // dialog or not, and a stale "yes" would report success for work nobody did.
+        let agentRunning = AgentProbe.isRunning()
+        state.agent = AgentObservation.seen(running: agentRunning)
+
+        switch AgentSupervisor.route(kind: kind, agentRunning: agentRunning) {
+        case .agentReconciles:
+            log.log("apply-watcher: \(kind.rawValue) needs no prompt — the root agent is running")
+            state.lastMessage = nil
+            poller.refreshSoon()
+            completion(
+                PrivilegedRunOutcome(
+                    ok: true, cancelled: false, output: AgentSupervisor.reconciledMessage))
+        case .needsPrompt:
+            // No agent (or an uninstall): this is the one prompt, and the request the user just
+            // made is the reason for it. It counts as this session's ask.
+            state.agentPromptRaised = true
+            runPrivileged(kind == .uninstall ? .uninstall : .apply) { result in
+                completion(
+                    PrivilegedRunOutcome(
+                        ok: result.ok, cancelled: result.cancelled, output: result.output))
+            }
+        }
     }
 
     /// The app has no Dock icon and never opens a window, so on a genuine first run nothing
@@ -111,15 +193,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MenuAc
         }
     }
 
+    /// Shutting down used to hang here, needing SIGKILL — and a wedged tray blocks
+    /// `make install`, which refuses to replace a running app. Three rules now hold on every
+    /// path, and TerminationCoordinator.swift is where they are enforced and tested:
+    ///
+    ///   1. the reply is never delivered before this method has RETURNED `.terminateLater`
+    ///      (`begin` defers arming to a later main run-loop turn, and `DashboardProcess.stop`
+    ///      no longer calls its completion inline);
+    ///   2. it is delivered exactly once, even if a child reports twice or not at all;
+    ///   3. if AppKit still will not tear the process down, the exit watchdog does.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard !isTerminating else { return .terminateNow }
         isTerminating = true
         log.log("tray: shutting down")
+
+        let coordinator = TerminationCoordinator(
+            log: { [weak self] message in self?.log.log(message) },
+            reply: { NSApp.reply(toApplicationShouldTerminate: true) },
+            hardExit: { [weak self] in self?.hardExit() })
+        termination = coordinator
+        coordinator.begin(waitingFor: ["dashboard"])
+
         applyWatcher?.stop()
-        poller.stop()
-        heartbeat.stop()  // removes the liveness file -> the root forwarder exits on its own
-        dashboard.stop { NSApp.reply(toApplicationShouldTerminate: true) }
+        loginItemWatcher?.stop()
+        poller?.stop()
+        // Removes the liveness file -> the root agent exits on its own. Nothing is left
+        // running as root, with no password needed to stop it.
+        heartbeat?.stop()
+
+        if let dashboard {
+            dashboard.stop { coordinator.finished("dashboard") }
+        } else {
+            // Never started (a failed launch). Reporting inline is safe precisely because the
+            // coordinator has not armed yet — that is the whole point of arming late.
+            coordinator.finished("dashboard")
+        }
         return .terminateLater
+    }
+
+    /// Last resort for the exit watchdog. Everything that outlives the process is dealt with
+    /// first: the liveness file (so the root agent exits on its own) and our own child.
+    private func hardExit() {
+        heartbeat?.stop()
+        dashboard?.forceKill()
+        log.log("tray: AppKit did not terminate — exiting the hard way")
+        log.flush()
+        exit(0)
     }
 
     // MARK: - Menu
@@ -151,15 +270,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MenuAc
     }
 
     /// Privileged action #1 of 2. See PrivilegedApply.swift.
+    ///
+    /// Also the explicit "start the agent" action: when the agent is down this is how a user
+    /// asks for the prompt back after cancelling it, or after the agent exited (a stale
+    /// heartbeat, a reboot). Doing it by hand is the only retry — the app never re-raises a
+    /// dialog the user dismissed.
     func reapplyAliases(_ sender: Any?) {
+        let running = state.agentIsRunning
         let confirmed = confirm(
-            title: "Re-apply aliases?",
-            body: "macOS will ask for your administrator password once. "
-                + "This updates the managed block in /etc/hosts, the loopback addresses on lo0, "
-                + "flushes DNS and restarts the forwarder. Nothing is installed permanently.",
-            action: "Re-apply")
+            title: running ? "Re-apply aliases?" : "Start the root agent?",
+            body: running
+                ? "This is rarely needed — the root agent already applies changes on its own. "
+                    + "macOS will ask for your administrator password once, then /etc/hosts, the "
+                    + "lo0 addresses, DNS and the routes are re-applied. Nothing is installed "
+                    + "permanently."
+                : "macOS will ask for your administrator password once. That starts the root "
+                    + "agent, which sets up /etc/hosts, the loopback addresses on lo0 and the "
+                    + "forwarder, and then keeps them in step with your aliases without asking "
+                    + "again. It exits by itself when you quit this app. Nothing is installed "
+                    + "permanently.",
+            action: running ? "Re-apply" : "Start")
         guard confirmed else { return }
+        state.agentPromptRaised = true
         runPrivileged(.apply)
+    }
+
+    /// Not privileged, and deliberately not a toggle: the toggle lives in the dashboard's
+    /// settings drawer. This is the escape hatch for `.requiresApproval`, the one login-item
+    /// state that can only be fixed in System Settings.
+    func openLoginItemSettings(_ sender: Any?) {
+        open(urlString: LoginItemState.systemSettingsURL)
     }
 
     /// Privileged action #2 of 2. See PrivilegedApply.swift.

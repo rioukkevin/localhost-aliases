@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, chmodS
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  agentIsRunning,
   applyArgv,
   buildCliRequest,
   cliMain,
@@ -435,5 +436,139 @@ describe("the CLI never raises a prompt by accident", () => {
     const [code] = await Promise.all([proc.exited, new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
     expect(code).toBe(2);
     expect(stub.called()).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The root-agent model on the command line (docs/AGENT.md §1)
+//
+// One prompt at launch starts the agent; afterwards it watches desired-state.json and
+// reconciles on its own. `--if-needed` is what makes that true for the CLI path too: with
+// the agent up there is nothing for a prompt to do, so no dialog is raised at all.
+// ---------------------------------------------------------------------------
+
+/** A PATH whose osascript records that it was called and does nothing else. */
+function stubOsascriptIn(root: string): { binDir: string; called(): boolean } {
+  const binDir = join(root, "bin");
+  mkdirSync(binDir, { recursive: true });
+  const marker = join(root, "osascript.called");
+  writeFileSync(
+    join(binDir, "osascript"),
+    `#!/bin/bash\nprintf '%s\\n' "$*" >> ${JSON.stringify(marker)}\nprintf 'LA_RESULT status=ok\\n'\nexit 0\n`,
+  );
+  chmodSync(join(binDir, "osascript"), 0o755);
+  return { binDir, called: () => existsSync(marker) };
+}
+
+/** A process we own, so signal 0 has something real to find. Killed by PID, never by name. */
+function spawnIdleProcess(): { pid: number; stop(): void } {
+  const proc = Bun.spawn(["/bin/sh", "-c", "sleep 30"], { stdout: "ignore", stderr: "ignore", stdin: "ignore" });
+  return { pid: proc.pid, stop: () => proc.kill() };
+}
+
+describe("agentIsRunning", () => {
+  test("no status file, unreadable JSON and a nonsense pid are all 'not running'", async () => {
+    const root = mkdtempSync(join(tmpdir(), "la-agent-probe-"));
+    expect(await agentIsRunning(join(root, "missing.json"))).toBe(false);
+
+    const bad = join(root, "bad.json");
+    writeFileSync(bad, "{not json");
+    expect(await agentIsRunning(bad)).toBe(false);
+
+    for (const pid of [0, 1, -5, 2.5, "123", null]) {
+      const path = join(root, "pid.json");
+      writeFileSync(path, JSON.stringify({ pid }));
+      expect(await agentIsRunning(path)).toBe(false);
+    }
+  });
+
+  test("our own pid is not evidence of an agent", async () => {
+    const root = mkdtempSync(join(tmpdir(), "la-agent-probe-"));
+    const path = join(root, "self.json");
+    writeFileSync(path, JSON.stringify({ pid: process.pid }));
+    expect(await agentIsRunning(path)).toBe(false);
+  });
+
+  test("a live pid is running; the same pid once it has exited is not", async () => {
+    const root = mkdtempSync(join(tmpdir(), "la-agent-probe-"));
+    const path = join(root, "status.json");
+    const idle = spawnIdleProcess();
+    try {
+      writeFileSync(path, JSON.stringify({ pid: idle.pid }));
+      expect(await agentIsRunning(path)).toBe(true);
+    } finally {
+      idle.stop();
+    }
+    // Reaped, so the pid is gone. A stale status file must not read as a running agent.
+    await Bun.sleep(150);
+    expect(await agentIsRunning(path)).toBe(false);
+  });
+});
+
+describe("--if-needed: no prompt while the agent is up", () => {
+  test("it is parsed, and off unless asked for", () => {
+    expect(parseCliArgs([]).ifNeeded).toBe(false);
+    expect(parseCliArgs(["--if-needed"])).toMatchObject({ action: "apply", ifNeeded: true });
+  });
+
+  test("with the agent running, nothing is elevated and the CLI says why", async () => {
+    const s = await cliSandbox();
+    const stub = stubOsascriptIn(s.root);
+    const idle = spawnIdleProcess();
+    try {
+      writeFileSync(
+        join(s.env.LA_CONFIG_DIR!, "forwarder-status.json"),
+        JSON.stringify({ pid: idle.pid, startedAt: new Date().toISOString(), routes: [], failures: [] }),
+      );
+      const proc = Bun.spawn(["bun", "run", PROMPT_TS, "--if-needed"], {
+        env: { ...process.env, ...s.env, NODE_ENV: "production", PATH: `${stub.binDir}:${process.env.PATH}` },
+        stdout: "pipe", stderr: "pipe", stdin: "ignore",
+      });
+      const [code, stdout] = await Promise.all([proc.exited, new Response(proc.stdout).text()]);
+      expect(code).toBe(0);
+      expect(stdout).toContain("reason=agent-running");
+      expect(stdout).toContain("prompt=skipped");
+      expect(stub.called()).toBe(false); // THE point: no dialog, not even a prepared one
+    } finally {
+      idle.stop();
+    }
+  });
+
+  test("with no agent, --if-needed still raises the one prompt: the manual path survives", async () => {
+    const s = await cliSandbox();
+    const stub = stubOsascriptIn(s.root);
+    // A status file left behind by a crashed agent must not suppress the prompt.
+    writeFileSync(
+      join(s.env.LA_CONFIG_DIR!, "forwarder-status.json"),
+      JSON.stringify({ pid: 2_147_483_6, startedAt: new Date().toISOString(), routes: [], failures: [] }),
+    );
+    const proc = Bun.spawn(["bun", "run", PROMPT_TS, "--if-needed"], {
+      env: { ...process.env, ...s.env, NODE_ENV: "production", PATH: `${stub.binDir}:${process.env.PATH}` },
+      stdout: "pipe", stderr: "pipe", stdin: "ignore",
+    });
+    const [code] = await Promise.all([proc.exited, new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+    expect(code).toBe(0);
+    expect(stub.called()).toBe(true);
+  });
+
+  test("an uninstall ignores --if-needed: root must stop the agent, not ask it nicely", async () => {
+    const s = await cliSandbox();
+    const stub = stubOsascriptIn(s.root);
+    const idle = spawnIdleProcess();
+    try {
+      writeFileSync(
+        join(s.env.LA_CONFIG_DIR!, "forwarder-status.json"),
+        JSON.stringify({ pid: idle.pid, startedAt: new Date().toISOString(), routes: [], failures: [] }),
+      );
+      const proc = Bun.spawn(["bun", "run", PROMPT_TS, "uninstall", "--if-needed"], {
+        env: { ...process.env, ...s.env, NODE_ENV: "production", PATH: `${stub.binDir}:${process.env.PATH}` },
+        stdout: "pipe", stderr: "pipe", stdin: "ignore",
+      });
+      const [code] = await Promise.all([proc.exited, new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+      expect(code).toBe(0);
+      expect(stub.called()).toBe(true);
+    } finally {
+      idle.stop();
+    }
   });
 });

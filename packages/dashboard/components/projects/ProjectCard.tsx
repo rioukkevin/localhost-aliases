@@ -15,9 +15,14 @@ export interface ProjectCardProps {
 const LAMPS = 8;
 
 /**
- * One folder, as a panel face: the folder name, the path it really is, the lamps for
- * its aliases, and whether the folder carries a workspace file. Clicking it opens the
- * drawer with the actual patch cables.
+ * One folder, as a panel face: the folder name, the path it really is, what we think runs
+ * in it, the lamps for its aliases, and whether the folder carries a workspace file.
+ * Clicking it opens the drawer with the actual patch cables.
+ *
+ * The stack chip is deliberately shown in both directions. A recognised folder names its
+ * framework; an unrecognised one says so, in the same slot, rather than leaving a gap the
+ * user has to interpret. "unknown stack" costs one faint chip and never misleads — and
+ * the command itself is one click away in the drawer, where there is room for it.
  */
 export function ProjectCard({ project, onOpen }: ProjectCardProps) {
   const lamps = project.aliases.slice(0, LAMPS);
@@ -45,6 +50,15 @@ export function ProjectCard({ project, onOpen }: ProjectCardProps) {
       <p className="mono truncate text-[11px] text-faint" title={project.path}>
         {tildePath(project.path)}
       </p>
+
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Chip tone="muted" className="shrink-0" data-testid="project-stack">
+          {project.stack ? project.stack.framework : "unknown stack"}
+        </Chip>
+        {project.stack?.confidence === "low" ? (
+          <span className="text-[10px] uppercase tracking-[0.14em] text-faint">inferred</span>
+        ) : null}
+      </div>
 
       <div className="flex min-h-[1.25rem] flex-wrap items-center gap-1.5">
         {lamps.map((alias) => (

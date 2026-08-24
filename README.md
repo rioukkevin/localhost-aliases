@@ -33,14 +33,42 @@ There is no LaunchDaemon, no `SMAppService`, no privileged helper and no `sudo` 
 The only changes to your machine are the `/etc/hosts` block and the `lo0` addresses, and both
 are reversed by `make uninstall`.
 
-Privileged work happens in **one batch behind one macOS admin prompt** (`osascript … with
-administrator privileges`) — when you add or remove an alias, and once at launch if a reboot
-has cleared the `lo0` addresses. **Changing only a port never prompts**: the forwarder watches
-its routes file and reloads by itself.
+### One admin prompt per app launch — and what that buys
+
+You are asked for your password **once, when the app starts** (`osascript … with administrator
+privileges`). That prompt starts the **root agent**: a long-lived root process that is also the
+forwarder. From then on, adding an alias, removing one, renaming one or changing a port **does
+not prompt again**. The app writes what it wants into `~/.config/localhost-aliases/desired-state.json`
+and the agent reconciles the machine to it.
 
 The forwarder runs as root, and a normal process cannot kill root. So it owns its own lifetime:
-the app touches a liveness file every few seconds, and the forwarder exits on its own when that
+the app touches a liveness file every few seconds, and the agent exits on its own when that
 stops. Quitting the app is clean, with no second prompt.
+
+### The security tradeoff, stated plainly
+
+**`desired-state.json` is writable by your user account, and a root process acts on it.** Any
+process running as you can therefore ask root to edit `/etc/hosts` and add loopback addresses,
+without a password prompt, for as long as the app is running. That is a real local privilege
+escalation and it is the price of not being asked for your password on every edit. If you would
+rather pay per edit, quit the app — nothing runs as root once it is closed.
+
+It is bounded by validation the agent performs itself, never trusting the file
+([`packages/forwarder/src/desired.ts`](packages/forwarder/src/desired.ts)):
+
+- hostnames are re-validated on every read — whitespace, `#`, newlines, over-long labels and
+  system names like `localhost` are refused;
+- only `127.0.0.2`–`127.0.0.254` is ever added to or removed from `lo0`. `127.0.0.1` cannot be
+  touched, and an address the agent did not allocate is never removed;
+- `/etc/hosts` edits are confined to the managed marker block, written atomically, and refused
+  outright if a single byte outside the markers would change;
+- forwarders bind loopback only, and a port at or below 1024 only on a pool address — so the
+  file cannot make root hold `127.0.0.1:22` and splice it somewhere;
+- one bad entry rejects the **whole** file, leaving the previous state exactly as it was, with
+  the reason in the log.
+
+Nothing named in the file is ever executed. See
+[`packages/privileged/README.md`](packages/privileged/README.md) for the full surface.
 
 ### `http://` only
 
@@ -56,7 +84,7 @@ make install     # copies it into /Applications
 ```
 
 Launch it from `/Applications`, then follow the onboarding — it explains exactly what will
-change before anything happens, and asks for your password once.
+change before anything happens, and asks for your password once per app launch.
 
 To remove every trace, including the `/etc/hosts` block and the `lo0` addresses:
 
@@ -66,8 +94,10 @@ make uninstall   # one admin prompt
 
 ## Usage
 
-Create an alias in the dashboard: a name (`myapp`) and a port (`3000`). Adding or removing an
-alias needs the admin prompt; changing its port afterwards takes effect immediately.
+Create an alias in the dashboard: a name (`myapp`) and a port (`3000`). With the root agent
+running, adding, removing and re-porting an alias all take effect immediately, with no further
+prompt. If the agent is not running the dashboard says so and offers to start it — that is the
+one prompt.
 
 ### Project workspace file (optional)
 

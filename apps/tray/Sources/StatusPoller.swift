@@ -118,22 +118,16 @@ final class StatusPoller {
         return state
     }
 
+    /// The agent IS the forwarder (docs/AGENT.md §1), so its published pid is the whole
+    /// signal. Shared with AgentProbe rather than duplicated — the launch-time decision and
+    /// this poll must never disagree about what "running" means.
     private func readForwarderStatus() -> SystemSnapshot {
         var snapshot = SystemSnapshot()
-        guard let data = FileManager.default.contents(atPath: Paths.forwarderStatusPath),
-            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let pid = object["pid"] as? Int
-        else { return snapshot }
-        snapshot.forwarderPid = pid
-        snapshot.forwarderRunning = isAlive(pid: Int32(pid))
+        guard let pid = AgentProbe.pid() else { return snapshot }
+        snapshot.forwarderPid = Int(pid)
+        snapshot.forwarderRunning = AgentProbe.isAlive(pid: pid)
         return snapshot
     }
 
-    /// Signal 0 delivers nothing; it only asks whether the pid exists. EPERM means it exists
-    /// and belongs to root — which is exactly the forwarder.
-    private func isAlive(pid: Int32) -> Bool {
-        guard pid > 0 else { return false }
-        if kill(pid, 0) == 0 { return true }
-        return errno == EPERM
-    }
+    private func isAlive(pid: Int32) -> Bool { AgentProbe.isAlive(pid: pid) }
 }

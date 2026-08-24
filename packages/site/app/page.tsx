@@ -157,22 +157,22 @@ export default function LandingPage() {
         </div>
 
         <div className="mt-8 grid gap-6 lg:grid-cols-2">
-          <Panel title="One admin prompt" meta="osascript">
+          <Panel title="One admin prompt per launch" meta="osascript">
             <ul className="flex flex-col gap-3 text-[13px] leading-relaxed text-muted">
               <li>
-                <span className="text-ink">What runs as root:</span> one idempotent script that adds
-                or removes <span className="mono">lo0</span> addresses, rewrites the managed block
-                in <span className="mono">/etc/hosts</span>, flushes the DNS cache and starts the
-                forwarder. Nothing else.
+                <span className="text-ink">When you are asked:</span> once, when the app starts. That
+                prompt starts the <span className="text-ink">root agent</span> — a long-lived root
+                process that is also the forwarder.
               </li>
               <li>
-                <span className="text-ink">When you are asked:</span> when the set of hostnames or
-                addresses changes — adding or removing an alias — and once at launch if a reboot has
-                cleared the <span className="mono">lo0</span> addresses.
+                <span className="text-ink">When you are not:</span> every alias change after that.
+                Adding, removing, renaming and re-porting all land without a password.
               </li>
               <li>
-                <span className="text-ink">When you are not:</span> changing an alias&rsquo;s target
-                port. The forwarder watches its routes file and reloads by itself.
+                <span className="text-ink">What runs as root:</span> adding and removing{" "}
+                <span className="mono">lo0</span> addresses, rewriting the managed block in{" "}
+                <span className="mono">/etc/hosts</span>, flushing the DNS cache, and copying bytes
+                between sockets. Nothing else — and nothing it reads is ever executed.
               </li>
             </ul>
           </Panel>
@@ -222,6 +222,38 @@ export default function LandingPage() {
             <span className="mono">sudo</span> command — for{" "}
             <span className="mono">https://index.test</span>. Firefox keeps its own trust store and
             the flow says so.
+          </p>
+        </Banner>
+      </Section>
+
+      <Section
+        id="standing-root"
+        eyebrow="the other real limitation"
+        title="A root process acts on a file your user account can write"
+        lede="This is what one prompt per launch actually costs, so it is stated here rather than discovered later."
+      >
+        <Banner tone="warn" title="While the app runs, anything running as you can reach root through it">
+          <p>
+            The prompt at launch starts the <span className="text-ink">root agent</span>. It watches{" "}
+            <span className="mono">~/.config/localhost-aliases/desired-state.json</span> — a file{" "}
+            <span className="text-ink">your user account can write</span> — and reconciles the
+            machine to it with no further password. So any process running as you can ask root to
+            edit <span className="mono">/etc/hosts</span> and add loopback addresses, silently, for
+            as long as the app is open. That is a real local privilege escalation, and it is the
+            price of not being asked for your password on every edit.{" "}
+            <span className="text-ink">Quit the app and nothing runs as root.</span>
+          </p>
+          <p className="mt-2.5">
+            It is bounded by validation the agent does itself, never trusting the file: hostnames
+            re-checked on every read (no whitespace, no <span className="mono">#</span>, no
+            newlines, no <span className="mono">localhost</span>); only{" "}
+            <span className="mono">127.0.0.2–127.0.0.254</span> ever added to or removed from{" "}
+            <span className="mono">lo0</span>, never <span className="mono">127.0.0.1</span> and
+            never an address it did not allocate; <span className="mono">/etc/hosts</span> edits
+            confined to the managed block and refused if one byte outside it would change; a port
+            at or below 1024 bound only on a pool address. One bad entry rejects the whole file and
+            leaves the previous state untouched.{" "}
+            <span className="text-ink">Nothing named in that file is ever executed.</span>
           </p>
         </Banner>
       </Section>
@@ -305,9 +337,9 @@ export default function LandingPage() {
                 It can register an alias for the repo it is working in, and link a folder to a URL.
               </li>
               <li>
-                <span className="text-ink">Creating or deleting an alias still raises the same
-                macOS admin prompt.</span>{" "}
-                An agent cannot add a hostname to your machine behind your back.
+                <span className="text-ink">While the root agent is running, an agent&rsquo;s alias
+                changes land without a further password prompt</span> — the same as your own. If
+                that is not what you want, quit the app: nothing runs as root once it is closed.
               </li>
             </ul>
           </Panel>
@@ -330,7 +362,7 @@ export default function LandingPage() {
             {
               term: "An admin account",
               detail:
-                "The password prompt appears only when the set of hostnames or loopback addresses changes. Changing a port never prompts.",
+                "You are asked for your password once per app launch, to start the root agent. Alias changes after that \u2014 adding, removing, re-porting \u2014 never prompt again.",
             },
             {
               term: "To build it",

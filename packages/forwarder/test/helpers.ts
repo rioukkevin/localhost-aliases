@@ -7,6 +7,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Route } from "@localhost-aliases/core/types";
+import { isPoolIp } from "@localhost-aliases/core/ips";
+import type { SystemOps } from "../src/system.ts";
 
 export async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), "la-forwarder-"));
@@ -83,6 +85,94 @@ export async function httpGet(port: number, path = "/"): Promise<string> {
   const text = Buffer.concat(chunks).toString("utf8");
   const headerEnd = text.indexOf("\r\n\r\n");
   return headerEnd === -1 ? text : text.slice(headerEnd + 4);
+}
+
+/**
+ * A recording stand-in for everything the agent can do to the machine.
+ *
+ * NOTHING in the agent tests may run ifconfig, write /etc/hosts or flush DNS, so the real
+ * SystemOps is never constructed: this is. It keeps the same invariants the real one does
+ * (a non-pool address is refused) so a test that would have escalated still fails here.
+ */
+export interface FakeSystem extends SystemOps {
+  lo0: string[];
+  hosts: string;
+  calls: string[];
+  /** Set to make the next call of that name throw, as a wedged machine would. */
+  failNext: Set<string>;
+  hostsWrites: number;
+}
+
+export function fakeSystem(options: { lo0?: string[]; hosts?: string } = {}): FakeSystem {
+  const self: FakeSystem = {
+    lo0: [...(options.lo0 ?? ["127.0.0.1"])],
+    hosts: options.hosts ?? SYSTEM_HOSTS,
+    calls: [],
+    failNext: new Set(),
+    hostsWrites: 0,
+
+    async listLoopbackIps() {
+      self.calls.push("list");
+      if (self.failNext.delete("list")) throw new Error("ifconfig is wedged");
+      return [...self.lo0];
+    },
+    async addLoopbackIp(ip) {
+      self.calls.push(`add ${ip}`);
+      if (self.failNext.delete("add")) throw new Error("ifconfig refused");
+      if (!isPoolIp(ip)) throw new Error(`refusing to add ${ip}: outside 127.0.0.2-254`);
+      if (!self.lo0.includes(ip)) self.lo0.push(ip);
+    },
+    async removeLoopbackIp(ip) {
+      self.calls.push(`remove ${ip}`);
+      if (self.failNext.delete("remove")) throw new Error("ifconfig refused");
+      if (!isPoolIp(ip)) throw new Error(`refusing to remove ${ip}: outside 127.0.0.2-254`);
+      self.lo0 = self.lo0.filter((x) => x !== ip);
+    },
+    async readHosts() {
+      self.calls.push("readHosts");
+      if (self.failNext.delete("readHosts")) throw new Error("hosts is unreadable");
+      return self.hosts;
+    },
+    async writeHosts(content) {
+      self.calls.push("writeHosts");
+      if (self.failNext.delete("writeHosts")) throw new Error("hosts is read-only");
+      self.hosts = content;
+      self.hostsWrites += 1;
+    },
+    async flushDns() {
+      self.calls.push("flushDns");
+    },
+  };
+  return self;
+}
+
+/** A believable /etc/hosts, so "nothing outside the markers changed" means something. */
+export const SYSTEM_HOSTS = [
+  "##",
+  "# Host Database",
+  "##",
+  "127.0.0.1\tlocalhost",
+  "255.255.255.255\tbroadcasthost",
+  "::1             localhost",
+  "",
+].join("\n");
+
+/** The shape the dashboard writes. Tests mutate it into hostile variants. */
+export function desiredState(
+  overrides: Partial<{ hosts: unknown[]; loopbackIps: unknown[]; routes: unknown[] }> = {},
+): Record<string, unknown> {
+  return {
+    hosts: [
+      { ip: "127.0.0.2", hostname: "index.test" },
+      { ip: "127.0.0.3", hostname: "myapp.test" },
+    ],
+    loopbackIps: ["127.0.0.2", "127.0.0.3"],
+    routes: [
+      { ip: "127.0.0.2", listenPort: 80, targetPort: 7788, hostname: "index.test" },
+      { ip: "127.0.0.3", listenPort: 80, targetPort: 3000, hostname: "myapp.test" },
+    ],
+    ...overrides,
+  };
 }
 
 /** True when nothing is listening on the port. */

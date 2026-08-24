@@ -1,12 +1,18 @@
 import Foundation
 
 // =============================================================================================
-//  Harness for ApplyRequestWatcher.
+//  Harness for the tray's decision-making.
 //
-//  It compiles the REAL Sources/ApplyRequestWatcher.swift (plus Paths.swift and Logger.swift) —
-//  no logic is copied here. PrivilegedApply.swift, the only file that can raise a password
-//  dialog, is deliberately NOT part of this target: the watcher takes its runner as a closure,
-//  and the stub below is all this binary can ever run.
+//  Four suites, all compiling the REAL Sources/ files — no logic is copied here:
+//    * ApplyRequestWatcher   (below)             the dashboard -> tray request channel
+//    * TerminationTests.swift                    the shutdown hang, reproduced and fixed
+//    * AgentTests.swift                          the one launch prompt, and no prompt after it
+//    * LoginItemTests.swift                      launch at login, reporting the real status
+//
+//  The two files that can act on the machine are deliberately NOT part of this target:
+//  PrivilegedApply.swift (the password dialog) and LoginItemService.swift (the only
+//  register()/unregister() calls). Both are injected as closures, so the stubs below are all
+//  this binary can ever run.
 //
 //  Everything it touches lives under a fresh temp directory. It never reads or writes
 //  ~/.config/localhost-aliases, /etc/hosts or anything else on the machine.
@@ -295,6 +301,15 @@ let fourth =
     (try! JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: resultPath))))
     as! [String: Any]
 check(fourth["id"] as? String == "req-4", "and its result replaces the previous one")
+
+// -- the other three suites --------------------------------------------------------------------
+
+print("")
+runTerminationTests()
+print("")
+runAgentTests()
+print("")
+runLoginItemTests()
 
 print("")
 print("\(checks - failures)/\(checks) checks passed")

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useStatus } from "../../lib/client/status-store.ts";
 import { StatusDetail } from "./StatusDetail.tsx";
 import { readApply, readAutoApply } from "./auto-apply-read.ts";
-import { LAMP, readInstall, readTray, type Reading } from "./status-read.ts";
+import { LAMP, readAgent, readInstall, readTray, type Reading } from "./status-read.ts";
 
 function Lamp({ reading }: { reading: Reading }) {
   return (
@@ -32,14 +32,19 @@ function Gauge({ label, reading }: { label: string; reading: Reading }) {
 /**
  * The instrument lamp, bottom right, on every view.
  *
- * Two permanent readings, never conflated: whether the menu-bar app is answering, and
- * whether this Mac actually matches your aliases. Both say "checking…" until the first
- * poll has come back — the previous shell asserted "the menu-bar app is not running" on
- * every page load, which was a claim about the machine made before asking it.
+ * Three permanent readings, never conflated: whether the menu-bar app is answering,
+ * whether the ROOT AGENT is running, and whether this Mac actually matches your aliases.
+ * All three say "checking…" until the first poll has come back — the previous shell
+ * asserted "the menu-bar app is not running" on every page load, which was a claim about
+ * the machine made before asking it.
  *
- * A third appears only while an automatic apply is in flight or stuck, because a
- * permanent "auto-apply: idle" lamp would be three words of chrome saying nothing
- * happened. Its detail panel carries the one button that gets a dismissed prompt back.
+ * The agent lamp earns its permanent place because it is the one thing that decides
+ * whether editing an alias costs a password. Running: nothing ever prompts. Not running:
+ * one prompt, offered by the button in the panel below.
+ *
+ * A fourth appears only while an apply is in flight or stuck, because a permanent
+ * "auto-apply: idle" lamp would be three words of chrome saying nothing happened. Its
+ * detail panel carries the one button that gets a dismissed prompt back.
  */
 export function StatusIndicator() {
   const state = useStatus();
@@ -48,6 +53,7 @@ export function StatusIndicator() {
   const buttonRef = useRef<HTMLButtonElement>(null);
 
   const tray = readTray(state);
+  const agent = readAgent(state);
   const install = readInstall(state);
   const apply = readApply(readAutoApply(state));
 
@@ -94,6 +100,7 @@ export function StatusIndicator() {
         aria-haspopup="dialog"
         aria-label={[
           `Menu-bar app ${tray.value}`,
+          `root agent ${agent.value}`,
           `installation ${install.value}`,
           apply ? `automatic apply ${apply.value}` : null,
         ]
@@ -107,6 +114,10 @@ export function StatusIndicator() {
         ].join(" ")}
       >
         <Gauge label="tray" reading={tray} />
+        <span aria-hidden="true" className="h-3 w-px bg-hairline-strong" />
+        <span data-testid="agent-gauge" data-running={agent.tone === "live"}>
+          <Gauge label="agent" reading={agent} />
+        </span>
         <span aria-hidden="true" className="h-3 w-px bg-hairline-strong" />
         <Gauge label="state" reading={install} />
         {apply ? (

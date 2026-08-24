@@ -56,7 +56,14 @@ export function parseRoutes(text: string): ParsedRoutes {
     const key = routeKey(r as Route);
     if (seen.has(key)) return void errors.push(`route ${i}: duplicate ${key}, ignored`);
     seen.add(key);
-    routes.push({ ip: r.ip, listenPort: r.listenPort, targetPort: r.targetPort, hostname });
+    const route: Route = { ip: r.ip, listenPort: r.listenPort, targetPort: r.targetPort, hostname };
+    // Advisory only — it is printed on the offline page, never executed. A hint that is not
+    // two strings is simply not a hint; it is not worth rejecting a working route over.
+    const hint = r.hint as { framework?: unknown; command?: unknown } | undefined;
+    if (hint && typeof hint.framework === "string" && typeof hint.command === "string") {
+      route.hint = { framework: hint.framework, command: hint.command };
+    }
+    routes.push(route);
   });
 
   return { routes, errors };

@@ -2,6 +2,7 @@
 
 import { useStatus } from "../lib/client/status-store.ts";
 import { readAutoApply, type AutoApplyPhase } from "./shell/auto-apply-read.ts";
+import { agentRunning } from "./shell/status-read.ts";
 import { useReapply } from "./shell/useReapply.ts";
 import { LinkButton } from "./LinkButton.tsx";
 import { Banner, type BannerTone } from "./ui/Banner.tsx";
@@ -13,22 +14,38 @@ export interface DriftCopy {
   tone: BannerTone;
   title: string;
   body: string;
-  /** Null means no button: a prompt is already on its way and a second one is not help. */
-  action: "Re-apply now" | "Try again" | null;
+  /**
+   * Null means no button: either a prompt is already on its way and a second one is not
+   * help, or the root agent is up and closing the gap by itself.
+   */
+  action: "Re-apply now" | "Try again" | "Start the agent" | null;
 }
 
 /**
- * What the banner says, as data — the four automatic-apply states plus the two the app
- * has always had. Pure, so the wording can be tested without a browser.
+ * What the banner says, as data — the automatic-apply states plus the two the app has
+ * always had, each in two versions: one for a Mac where the root agent is running and one
+ * for a Mac where it is not. Pure, so the wording can be tested without a browser.
+ *
+ * That split IS the prompt model. With the agent up there is nothing to prompt for: it
+ * watches the desired state and reconciles /etc/hosts, the lo0 addresses and its routes
+ * itself, so drift closes on its own and the banner must not offer a password dialog that
+ * would never appear. With the agent down, one prompt starts it — and that same prompt
+ * covers every change already made and every change after.
  */
-export function driftCopy(phase: AutoApplyPhase, neverApplied: boolean): DriftCopy {
+export function driftCopy(
+  phase: AutoApplyPhase,
+  neverApplied: boolean,
+  agentUp = false,
+): DriftCopy {
   switch (phase) {
     case "scheduled":
       return {
         testId: "banner-applying",
         tone: "info",
-        title: "Applying in a moment",
-        body: "Your change is saved. The menu-bar app raises one admin prompt for everything pending in a second — adding three aliases in a row still costs one password.",
+        title: agentUp ? "Applying in a moment" : "Starting the root agent in a moment",
+        body: agentUp
+          ? "Your change is saved. The root agent is already running, so this settles by itself in a second — nothing is going to ask for your password."
+          : "Your change is saved. The menu-bar app raises the one admin prompt in a second, and the root agent it starts applies everything pending — and everything you change after it — without asking again.",
         action: null,
       };
     case "prompting":
@@ -36,7 +53,7 @@ export function driftCopy(phase: AutoApplyPhase, neverApplied: boolean): DriftCo
         testId: "banner-applying",
         tone: "info",
         title: "Waiting for your password",
-        body: "The menu-bar app has raised the admin prompt. Approve it and these names start resolving; dismiss it and nothing on this Mac changes. Your aliases are saved either way.",
+        body: "The menu-bar app has raised the one admin prompt: the one that starts the root agent. Approve it and these names start resolving, and alias changes stop asking. Dismiss it and nothing on this Mac changes. Your aliases are saved either way.",
         action: null,
       };
     case "deferred":
@@ -44,7 +61,7 @@ export function driftCopy(phase: AutoApplyPhase, neverApplied: boolean): DriftCo
         testId: "banner-drift",
         tone: "warn",
         title: "You dismissed the admin prompt",
-        body: "Your aliases are saved and nothing on this Mac has changed. Nothing will ask again on its own — a password dialog that comes back because you dismissed it is malware behaviour — so this button is the way back.",
+        body: "Your aliases are saved and nothing on this Mac has changed. Nothing will ask again on its own — a password dialog that comes back because you dismissed it is malware behaviour — so this button is the way back. It is still one prompt, and still the only one.",
         action: "Try again",
       };
     case "failed":
@@ -56,38 +73,47 @@ export function driftCopy(phase: AutoApplyPhase, neverApplied: boolean): DriftCo
         action: "Try again",
       };
     default:
+      if (agentUp) {
+        return {
+          testId: "banner-applying",
+          tone: "info",
+          title: "The agent is catching up",
+          body: "The root agent is running and watches your aliases, so it reconciles this by itself — usually before you finish reading this. Nothing here needs your password.",
+          action: null,
+        };
+      }
       return neverApplied
         ? {
             testId: "banner-drift",
             tone: "warn",
             title: "Nothing is applied on this Mac yet",
-            body: "Your aliases exist in the config, but no hostname resolves yet. Applying writes the managed /etc/hosts block, adds the loopback addresses and starts the forwarder.",
-            action: "Re-apply now",
+            body: "Your aliases exist in the config, but no hostname resolves yet. Starting the root agent writes the managed /etc/hosts block, adds the loopback addresses and begins forwarding. That is the one admin prompt; every alias you add afterwards is free.",
+            action: "Start the agent",
           }
         : {
             testId: "banner-drift",
             tone: "warn",
             title: "Live state has drifted",
-            body: "What is live on this Mac no longer matches your aliases — a reboot clears loopback addresses, so this is expected after one. Until it is re-applied, these names will not resolve.",
-            action: "Re-apply now",
+            body: "What is live on this Mac no longer matches your aliases — a reboot clears loopback addresses, so this is expected after one. The root agent is not running to put it back, so these names will not resolve until it is started.",
+            action: "Start the agent",
           };
   }
 }
 
 /**
- * The honest banner. lo0 aliases do not survive a reboot, so live state drifts away
- * from the config on its own — and when it does, names stop resolving.
+ * The honest banner. lo0 aliases do not survive a reboot, so live state drifts away from
+ * the config on its own — and when it does, names stop resolving.
  *
- * One button re-applies. What it can finish on its own it finishes: the desired-state
- * and routes files are rewritten and the running forwarder picks up port changes with
- * no prompt at all. What needs root, it hands over verbatim rather than pretending —
- * the dashboard is an unprivileged process, and the menu-bar app raises the one prompt.
+ * Which of two stories it tells depends entirely on one fact: is the root agent running?
  *
- * With automatic apply on, that same drift is usually already being dealt with, so the
- * banner says which of the four things is happening instead of offering a button that
- * would ask for a second password dialog covering the same reconcile. With the setting
- * off — or with the menu-bar app down — this banner and its button are the whole path,
- * exactly as they were before automatic apply existed.
+ *   Running — the agent watches the desired state and puts /etc/hosts, lo0 and its routes
+ *   back by itself. The banner reports that and offers no button, because there is nothing
+ *   for the user to approve and a button implying otherwise would be a lie.
+ *
+ *   Not running — nothing on this Mac is reconciling anything. One admin prompt starts the
+ *   agent, and that prompt covers everything pending and everything after it. The button
+ *   asks the menu-bar app to raise it; if the menu-bar app is down we hand over the exact
+ *   command instead of spinning, because the dashboard is unprivileged and stays that way.
  */
 export function DriftBanner() {
   const state = useStatus();
@@ -113,7 +139,8 @@ export function DriftBanner() {
   const drift = sync?.drift ?? system?.drift ?? [];
   const neverApplied =
     (system?.loopbackIps.length ?? 0) === 0 && (system?.managedHosts.length ?? 0) === 0;
-  const copy = driftCopy(auto.phase, neverApplied);
+  const agentUp = agentRunning(state);
+  const copy = driftCopy(auto.phase, neverApplied, agentUp);
 
   return (
     <div data-testid={copy.testId} data-phase={auto.phase}>
@@ -165,8 +192,9 @@ export function DriftBanner() {
         ) : null}
 
         <span className="block pt-2 text-[12px] text-faint">
-          Port changes need no prompt at all: the forwarder watches its routes file. Only
-          hostname and address changes do.
+          {agentUp
+            ? "Nothing here asks for a password. The root agent runs as root already and applies every change it sees, so adding, renaming and deleting aliases is free."
+            : "One admin prompt, once: it starts the root agent. After that the agent applies every change on its own, and nothing asks again until you quit the app."}
         </span>
       </Banner>
     </div>

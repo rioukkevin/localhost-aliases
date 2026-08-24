@@ -28,6 +28,13 @@ final class Logger {
         }
     }
 
+    /// Waits for everything already queued to reach the file. Logging is async, so the last
+    /// lines of a shutdown — the ones that explain WHY the app had to exit the hard way —
+    /// would otherwise die with the process.
+    func flush() {
+        queue.sync {}
+    }
+
     /// A file handle positioned at EOF, for a child process's stdout/stderr.
     static func appendHandle(at path: String) -> FileHandle? {
         Paths.ensureDirectory((path as NSString).deletingLastPathComponent)
