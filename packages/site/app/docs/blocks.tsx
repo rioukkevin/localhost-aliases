@@ -67,7 +67,12 @@ export function Inline({ text }: { text: string }) {
   );
 }
 
-function Block({ block }: { block: DocBlock }) {
+/**
+ * One block. Exported because /faq renders the same block model through the same renderer —
+ * a second markdown-ish renderer for the same six shapes would be a second thing to keep
+ * honest.
+ */
+export function Block({ block }: { block: DocBlock }) {
   switch (block.kind) {
     case "p":
       return (

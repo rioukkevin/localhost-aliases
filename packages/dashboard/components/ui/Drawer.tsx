@@ -128,7 +128,7 @@ function DrawerPanel({
         data-testid={rest["data-testid"] ?? "drawer"}
         data-side={side}
         className={[
-          "relative flex h-full w-full max-w-md flex-col bg-canvas outline-none",
+          "relative flex h-full w-full max-w-xl flex-col bg-canvas outline-none",
           side === "right"
             ? "border-l border-hairline-strong drawer-in-right"
             : "border-r border-hairline-strong drawer-in-left",

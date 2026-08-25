@@ -22,12 +22,15 @@ const SOURCE_BUILD = [
 export async function DownloadButton() {
   const release = await getLatestRelease();
 
-  if (!release) {
+  // `dmg` is nullable now that releases come from GitHub: a release can exist with no disk
+  // image attached (a failed upload, a notes-only tag). Both cases show the source build
+  // rather than a button with nothing behind it.
+  if (!release || !release.dmg) {
     return (
       <div className="border border-hairline-strong bg-raised">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-hairline px-4 py-3">
           <Chip tone="down" dot>
-            No release published yet
+            No download published yet
           </Chip>
           <p className="max-w-xl text-[12.5px] leading-relaxed text-muted">
             There is no signed or notarized build to download. Build it from source — nothing on
@@ -52,7 +55,7 @@ export async function DownloadButton() {
     );
   }
 
-  const { dmg } = release;
+  const dmg = release.dmg;
 
   return (
     <div className="flex flex-col items-start gap-3">

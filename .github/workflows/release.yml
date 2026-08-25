@@ -1,7 +1,11 @@
 name: release
 
-# Builds, signs, notarizes and staples the .app, then publishes a DMG to Vercel Blob and to a
-# GitHub Release. docs/RELEASE.md is the human procedure; this file is the machine one.
+# Builds, signs, notarizes and staples the .app, then publishes the DMG as a GitHub Release.
+# The GitHub Release is the only place a build is published: the site reads the GitHub API
+# (docs/SITE.md). docs/RELEASE.md is the human procedure; this file is the machine one.
+#
+# One job, on macos-15. There is no OS matrix and no cross-platform build: the product is a
+# macOS menu-bar app signed and notarized by Apple tooling, none of which exists elsewhere.
 #
 # Required repository secrets (Settings -> Secrets and variables -> Actions):
 #   DEVELOPER_ID_P12          base64 of your "Developer ID Application" cert exported as .p12
@@ -11,7 +15,7 @@ name: release
 #   AC_API_KEY_ID             App Store Connect API key id        (e.g. ABCD1234EF)
 #   AC_API_ISSUER_ID          App Store Connect issuer id         (a UUID)
 #   AC_API_KEY_P8             contents of the AuthKey_XXXX.p8 file, verbatim
-#   BLOB_READ_WRITE_TOKEN     Vercel Blob read-write token; without it the upload is skipped
+#   ANTHROPIC_API_KEY         writes the release notes; without it they are the commit list
 #
 # The API-key route is preferred over an app-specific password: it is scoped, revocable,
 # and does not carry your Apple ID.
@@ -42,7 +46,7 @@ jobs:
     env:
       HAS_SIGNING_CERT: ${{ secrets.DEVELOPER_ID_P12 != '' }}
       HAS_NOTARY_KEY: ${{ secrets.AC_API_KEY_P8 != '' }}
-      HAS_BLOB_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN != '' }}
+      HAS_ANTHROPIC_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
       IS_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
     steps:
       - uses: actions/checkout@v4
@@ -57,8 +61,11 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      # `bun run test` names the packages one by one; `bun test packages` would walk the whole
+      # directory and pick up packages/assets, which is local-only (docs/WEB.md), is not a
+      # workspace, and whose Remotion dependencies this job never installs.
       - name: Unit tests
-        run: bun test packages
+        run: bun run test
 
       # Fail in ten seconds rather than after a twenty-minute notarization.
       - name: Resolve the release version
@@ -126,8 +133,8 @@ jobs:
           spctl -a -vvv -t install "$APP" || echo "::warning::Gatekeeper rejected (expected until notarized)"
           xcrun stapler validate "$APP" || echo "::warning::no stapled ticket (expected until notarized)"
 
-      # One checksum, computed by the shell, published everywhere: the release body, the .sha256
-      # sidecar and the manifest. publish.ts recomputes it in Bun and refuses to disagree.
+      # One checksum, computed by the shell, published in both places a user can see it: the
+      # release body and the .dmg.sha256 sidecar attached to the same release.
       - name: Checksum the DMG
         id: dmg
         run: |
@@ -145,67 +152,60 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "$SHA  $(basename "$DMG")  ($SIZE bytes)"
 
-      - name: Compose the release notes
+      # The notes a human reads. An annotated tag's message wins outright: a person wrote it
+      # for this release, and re-writing it would both overwrite them and bill the API.
+      - name: Take the release notes from the annotated tag, if it has a message
         if: env.IS_TAG == 'true'
         run: |
           set -euo pipefail
+          mkdir -p dist
           TAG="$GITHUB_REF_NAME"
-          NOTES=dist/RELEASE_NOTES.md
-          # An annotated tag is where a human writes the notes. `git tag -l --format` would happily
-          # return the tagged *commit's* message for a lightweight tag, which is not release notes,
-          # so ask what kind of object the tag actually is first.
-          : > "$NOTES"
+          # `git tag -l --format` happily returns the tagged *commit's* message for a lightweight
+          # tag, which is not release notes, so ask what kind of object the tag actually is.
           if [ "$(git cat-file -t "$TAG" 2>/dev/null)" = "tag" ]; then
-            git tag -l --format='%(contents)' "$TAG" | sed '/^-----BEGIN PGP/,$d' > "$NOTES"
+            git tag -l --format='%(contents)' "$TAG" | sed '/^-----BEGIN PGP/,$d' > dist/RELEASE_NOTES.md
           fi
-          if [ ! -s "$NOTES" ]; then
-            PREV="$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)"
-            if [ -n "$PREV" ]; then
-              echo "### Changes since $PREV" > "$NOTES"
-              echo >> "$NOTES"
-              git log --no-merges --pretty=format:'- %s' "$PREV..$TAG" >> "$NOTES"
-              echo >> "$NOTES"
-            else
-              echo "First published release." > "$NOTES"
-            fi
-          fi
+          # An empty file is the same as no file to release-notes.ts; keep the tree tidy.
+          [ -s dist/RELEASE_NOTES.md ] || rm -f dist/RELEASE_NOTES.md
 
-          # The GitHub release body is the notes plus what a careful user needs to trust the file.
-          # The manifest keeps the notes alone — the site renders its own verification section.
-          {
-            cat "$NOTES"
-            echo
-            echo "---"
-            echo
-            echo '```'
-            echo "sha256  ${{ steps.dmg.outputs.sha256 }}"
-            echo "size    ${{ steps.dmg.outputs.size }} bytes"
-            echo '```'
-            echo
-            echo "Verify the download before opening it:"
-            echo
-            echo '```sh'
-            echo "shasum -a 256 ${{ steps.dmg.outputs.filename }}"
-            echo "spctl -a -vvv -t install /Volumes/Localhost\\ Aliases/LocalhostAliases.app"
-            echo "xcrun stapler validate /Volumes/Localhost\\ Aliases/LocalhostAliases.app"
-            echo '```'
-          } > dist/RELEASE_BODY.md
-          cat dist/RELEASE_BODY.md
+      # Generated notes cost money. A re-run of the same tag restores them instead of paying
+      # again; the cache is saved at the end of the job when the key was not already present.
+      - name: Restore previously generated release notes
+        if: env.IS_TAG == 'true'
+        uses: actions/cache@v4
+        with:
+          path: dist/RELEASE_NOTES.md
+          key: release-notes-${{ github.ref_name }}
 
-      # Skipped, not failed, when the token is absent — a fork can build a DMG without one.
-      - name: Publish to Vercel Blob
-        id: publish
-        if: env.IS_TAG == 'true' && env.HAS_BLOB_TOKEN == 'true'
+      # `secrets` cannot be read from a step-level `if:`, hence HAS_ANTHROPIC_KEY on the job.
+      # Without the secret this step is skipped, not failed — a fork still cuts a release, with
+      # the grouped commit list as its notes.
+      - name: Write the release notes with Claude
+        id: notes
+        if: env.IS_TAG == 'true' && env.HAS_ANTHROPIC_KEY == 'true'
         env:
-          BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          bun run packages/build/publish.ts \
+          bun run packages/build/release-notes.ts \
             --tag "$GITHUB_REF" \
-            --dmg "${{ steps.dmg.outputs.path }}" \
-            --app dist/LocalhostAliases.app \
-            --notes-file dist/RELEASE_NOTES.md \
-            --expect-sha256 "${{ steps.dmg.outputs.sha256 }}" \
-            --out dist/latest.json
+            --generate \
+            --notes dist/RELEASE_NOTES.md
+
+      # Never calls the API, always writes dist/RELEASE_BODY.md. The notes go on top; the
+      # version, date, sha256, size, download URL and compare link are computed by the script
+      # from this build, so nothing a commit message said can change them.
+      - name: Compose the release body
+        if: env.IS_TAG == 'true'
+        run: |
+          bun run packages/build/release-notes.ts \
+            --tag "$GITHUB_REF" \
+            --repo "$GITHUB_REPOSITORY" \
+            --notes dist/RELEASE_NOTES.md \
+            --out dist/RELEASE_BODY.md \
+            --filename "${{ steps.dmg.outputs.filename }}" \
+            --sha256 "${{ steps.dmg.outputs.sha256 }}" \
+            --size "${{ steps.dmg.outputs.size }}"
+          cat dist/RELEASE_BODY.md
 
       - name: Say what was published
         if: always() && env.IS_TAG == 'true'
@@ -219,8 +219,8 @@ jobs:
             echo "| size | ${{ steps.dmg.outputs.size }} bytes |"
             echo "| signed | ${{ env.HAS_SIGNING_CERT }} |"
             echo "| notarized | ${{ env.HAS_NOTARY_KEY }} |"
-            echo "| blob | ${{ steps.publish.outputs.dmg_url || 'skipped — BLOB_READ_WRITE_TOKEN is not set' }} |"
-            echo "| manifest | ${{ steps.publish.outputs.manifest_url || 'not updated' }} |"
+            echo "| notes | ${{ steps.notes.outputs.source == 'model' && 'written by claude-opus-5' || 'the grouped commit list' }} |"
+            echo "| release | ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ github.ref_name }} |"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
@@ -229,9 +229,12 @@ jobs:
           path: |
             dist/*.dmg
             dist/*.dmg.sha256
+            dist/RELEASE_NOTES.md
+            dist/RELEASE_BODY.md
           if-no-files-found: error
 
-      # The durable mirror. Blob can be re-provisioned; a GitHub Release outlives it.
+      # The release is the product: the site resolves the latest version, the notes and the DMG
+      # from the GitHub API (docs/SITE.md), so this step is what makes a build exist.
       - name: Attach the DMG to the release
         if: env.IS_TAG == 'true'
         uses: softprops/action-gh-release@v2

@@ -405,6 +405,29 @@ export async function linkProject(input: {
   return send<LinkProjectResult>("/api/projects/link", "POST", input);
 }
 
+/**
+ * Re-read a folder to see what runs in it now, ignoring the cached answer.
+ *
+ * `stack` is null when the folder is not recognised — that is the honest answer, not an
+ * error, so callers render "we do not recognise this" rather than a failure.
+ */
+export async function rescanProject(path: string): Promise<{
+  path: string;
+  stack: DetectedStack | null;
+  refreshed: boolean;
+}> {
+  const body = await send<{ path?: string; stack?: unknown; refreshed?: boolean }>(
+    "/api/projects/rescan",
+    "POST",
+    { path },
+  );
+  return {
+    path: body.path ?? path,
+    stack: toDetectedStack(body.stack),
+    refreshed: body.refreshed === true,
+  };
+}
+
 export async function writeWorkspaceFile(path: string): Promise<string> {
   const body = await send<{ workspaceFile?: string; path?: string }>(
     "/api/projects/workspace",

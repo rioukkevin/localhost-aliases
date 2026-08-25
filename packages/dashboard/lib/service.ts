@@ -54,7 +54,7 @@ import {
 } from "@localhost-aliases/core";
 import { autoApplyScheduler } from "./auto-apply-runtime.ts";
 import { NotFoundError, invalid } from "./http.ts";
-import { buildDesiredStateWithHints, stackForProject } from "./stack-hints.ts";
+import { buildDesiredStateWithHints, forgetStackFor, stackForProject } from "./stack-hints.ts";
 import { writeRuntimeFiles } from "./runtime-files.ts";
 import { readSystemState, type SystemProbes } from "./system.ts";
 import type { AutoApply, AutoApplyStatus } from "./auto-apply.ts";
@@ -415,6 +415,41 @@ export async function listProjects(options: ServiceOptions = {}): Promise<Projec
         };
       }),
   );
+}
+
+/**
+ * Re-detect what runs in one folder, ignoring anything already cached.
+ *
+ * Detection is memoised for a minute so that polling never re-reads a folder. That is the
+ * right default and the wrong one for a person who just added a framework and is looking
+ * at the screen — so this drops the folder's cached answer first and reads from disk.
+ *
+ * Read-only, like detection itself: nothing is executed and nothing is written into the
+ * user's repository. A folder that has been deleted or is unreadable answers `null`,
+ * which is the honest "we do not recognise this", not an error.
+ */
+export async function rescanProject(body: Record<string, unknown>): Promise<{
+  path: string;
+  stack: DetectedStack | null;
+  /** True when a previously cached answer was discarded to do this. */
+  refreshed: boolean;
+}> {
+  const path = typeof body.path === "string" ? body.path.trim() : "";
+  if (path === "") throw invalid("path", "Give the absolute path of the folder to scan.");
+
+  const config = await loadConfig();
+  const aliases = (await listAliases()).filter((a) => a.projectPath === path);
+  if (aliases.length === 0) {
+    throw invalid("path", `No alias points at ${path}, so there is nothing to scan.`);
+  }
+
+  const port = stackPortFor(aliases, config);
+  if (port === null) {
+    throw invalid("path", `The aliases for ${path} have no port to describe a start command against.`);
+  }
+
+  const refreshed = forgetStackFor(path) > 0;
+  return { path, stack: await stackForProject(path, port), refreshed };
 }
 
 export interface LinkProjectResult {

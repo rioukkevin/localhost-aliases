@@ -10,7 +10,6 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@vercel/blob": "^0.27.0",
     "next": "^15.1.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"

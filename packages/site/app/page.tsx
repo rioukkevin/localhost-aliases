@@ -1,15 +1,15 @@
+import Link from "next/link";
 import { DownloadButton } from "../components/landing/DownloadButton.tsx";
-import { HeroMedia } from "../components/landing/HeroMedia.tsx";
+import { MachineFigure } from "../components/landing/MachineFigure.tsx";
+import { MechanismFigure } from "../components/landing/MechanismFigure.tsx";
+import { PatchbayFigure } from "../components/landing/PatchbayFigure.tsx";
+import { ProblemFigure } from "../components/landing/ProblemFigure.tsx";
 import { FactList, Section } from "../components/landing/Section.tsx";
 import { GITHUB_URL } from "../components/site/links.ts";
 import { Banner } from "../components/ui/Banner.tsx";
 import { Chip } from "../components/ui/Chip.tsx";
 import { LinkButton } from "../components/ui/LinkButton.tsx";
 import { Panel } from "../components/ui/Panel.tsx";
-
-const WIRING = `/etc/hosts      127.0.0.2   myapp.test
-lo0 alias       127.0.0.2
-forwarder       127.0.0.2:80  ──raw bytes──▶  127.0.0.1:3000`;
 
 const MCP_TOOLS = [
   "list_aliases",
@@ -19,15 +19,6 @@ const MCP_TOOLS = [
   "link_project",
   "get_usage_instructions",
 ];
-
-/** A literal, non-copyable figure. CodeBlock is for things you are meant to run. */
-function Figure({ value }: { value: string }) {
-  return (
-    <pre className="mono overflow-x-auto border border-hairline-strong bg-sunken px-3 py-2.5 text-[12px] leading-relaxed text-ink">
-      {value}
-    </pre>
-  );
-}
 
 export default function LandingPage() {
   return (
@@ -65,10 +56,23 @@ export default function LandingPage() {
 
         <div className="mt-8 max-w-2xl">
           <DownloadButton />
+
+          <p className="mt-4 text-[12.5px] leading-relaxed text-muted">
+            The{" "}
+            <Link href="/download" className="text-ink underline underline-offset-4">
+              download page
+            </Link>{" "}
+            has the version, the size, the sha256 and what Gatekeeper will actually say. The{" "}
+            <Link href="/faq" className="text-ink underline underline-offset-4">
+              FAQ
+            </Link>{" "}
+            answers the sceptical questions: what runs as root and for how long, why there is no{" "}
+            <span className="mono">https</span>, and what is left behind when you uninstall.
+          </p>
         </div>
 
         <div className="mt-12">
-          <HeroMedia />
+          <PatchbayFigure />
         </div>
       </section>
 
@@ -78,7 +82,10 @@ export default function LandingPage() {
         title="localhost:3000 tells you nothing"
         lede="A port number is not a name. Everything your browser keys on the origin gets keyed on a number that means nothing and moves the next time something else grabs it first."
       >
-        <FactList
+        <ProblemFigure />
+
+        <div className="mt-8">
+          <FactList
           items={[
             {
               term: "The tab bar",
@@ -111,7 +118,8 @@ export default function LandingPage() {
                 "A link in a README or a ticket only works if the reader happens to have started the same server on the same port.",
             },
           ]}
-        />
+          />
+        </div>
       </Section>
 
       <Section
@@ -120,7 +128,7 @@ export default function LandingPage() {
         title="A name, an address, and a splice"
         lede="DNS maps a name to an IP, never to a port. So each alias gets its own loopback IP, and a raw TCP forwarder carries port 80 on that address to the port you already use."
       >
-        <Figure value={WIRING} />
+        <MechanismFigure />
 
         <div className="mt-8">
           <FactList
@@ -156,45 +164,48 @@ export default function LandingPage() {
           />
         </div>
 
-        <div className="mt-8 grid gap-6 lg:grid-cols-2">
-          <Panel title="One admin prompt per launch" meta="osascript">
-            <ul className="flex flex-col gap-3 text-[13px] leading-relaxed text-muted">
-              <li>
-                <span className="text-ink">When you are asked:</span> once, when the app starts. That
-                prompt starts the <span className="text-ink">root agent</span> — a long-lived root
-                process that is also the forwarder.
-              </li>
-              <li>
-                <span className="text-ink">When you are not:</span> every alias change after that.
-                Adding, removing, renaming and re-porting all land without a password.
-              </li>
-              <li>
-                <span className="text-ink">What runs as root:</span> adding and removing{" "}
-                <span className="mono">lo0</span> addresses, rewriting the managed block in{" "}
-                <span className="mono">/etc/hosts</span>, flushing the DNS cache, and copying bytes
-                between sockets. Nothing else — and nothing it reads is ever executed.
-              </li>
-            </ul>
-          </Panel>
+      </Section>
 
-          <Panel title="Nothing permanently installed" meta="no daemon">
-            <ul className="flex flex-col gap-3 text-[13px] leading-relaxed text-muted">
+      <Section
+        id="on-your-machine"
+        eyebrow="what changes here"
+        title="Two markers in /etc/hosts, an address on lo0, one prompt"
+        lede="Everything privileged is one idempotent apply. This is the whole of it, so you can decide before you type a password rather than after."
+      >
+        <MachineFigure />
+
+        <div className="mt-8">
+          <Panel title="What runs as root" meta="four operations, nothing else">
+            <ol className="flex flex-col gap-3 text-[13px] leading-relaxed text-muted">
               <li>
-                No <span className="mono">LaunchDaemon</span>, no{" "}
-                <span className="mono">SMAppService</span>, no privileged helper, no{" "}
-                <span className="mono">sudo</span> installer.
+                <span className="text-ink">Loopback addresses.</span>{" "}
+                <span className="mono">ifconfig lo0 alias|-alias 127.0.0.x</span> — only inside the
+                pool, and only for addresses it allocated itself.
               </li>
               <li>
-                The forwarder runs as root, and a normal process cannot kill root — so it owns its
-                own lifetime. The app touches a liveness file every few seconds and the forwarder
-                exits by itself when that stops. Quitting is clean, with no second prompt.
+                <span className="text-ink">The managed block.</span> It rewrites{" "}
+                <span className="mono">/etc/hosts</span> between the two markers, atomically, and
+                refuses to write at all if a byte outside them would change.
               </li>
               <li>
-                <span className="mono">make uninstall</span> reverses every change behind one
-                prompt: forwarder stopped, addresses removed, the{" "}
-                <span className="mono">/etc/hosts</span> block stripped, config deleted.
+                <span className="text-ink">The DNS cache.</span>{" "}
+                <span className="mono">dscacheutil -flushcache</span> and{" "}
+                <span className="mono">killall -HUP mDNSResponder</span>, so the new name answers
+                immediately.
               </li>
-            </ul>
+              <li>
+                <span className="text-ink">Bytes between sockets.</span> It binds{" "}
+                <span className="mono">:80</span> on each of those addresses and copies bytes to{" "}
+                <span className="mono">127.0.0.1:&lt;your port&gt;</span>.
+              </li>
+            </ol>
+
+            <p className="mt-4 border-t border-hairline pt-4 text-[12.5px] leading-relaxed text-muted">
+              That is the entire list. The agent re-validates every hostname, address and port it
+              reads before acting on any of them, and{" "}
+              <span className="text-ink">nothing named in that file is ever executed</span>. One bad
+              entry rejects the whole file and leaves the previous state in place.
+            </p>
           </Panel>
         </div>
       </Section>
@@ -394,8 +405,14 @@ export default function LandingPage() {
         />
 
         <div className="mt-8 flex flex-wrap gap-2">
-          <LinkButton href="/docs" variant="primary" size="md">
+          <LinkButton href="/download" variant="primary" size="md">
+            Get the app
+          </LinkButton>
+          <LinkButton href="/docs" size="md">
             Read the docs
+          </LinkButton>
+          <LinkButton href="/faq" size="md">
+            FAQ
           </LinkButton>
           <LinkButton href={GITHUB_URL} size="md" external>
             Source on GitHub

@@ -42,6 +42,11 @@ export function ProjectDrawer({
   onWriteWorkspace,
   writing,
 }: ProjectDrawerProps) {
+  // A rescan's answer is local until the next poll carries it: the polled `project` is a
+  // minute-stale cache by design, so showing it again would undo what the user just asked for.
+  const [rescanned, setRescanned] = useState<{ path: string; stack: ProjectSummary["stack"] } | null>(null);
+  const [scanning, setScanning] = useState(false);
+
   const actions = useAliasActions();
   const applyOf = useAliasApply();
   const toast = useToast();
@@ -82,6 +87,28 @@ export function ProjectDrawer({
     }
   }
 
+  // The freshly scanned answer wins, but only for the folder it was scanned for — the
+  // drawer is reused as the user clicks between projects.
+  const stack = rescanned && project && rescanned.path === project.path ? rescanned.stack : project?.stack ?? null;
+
+  async function scanAgain() {
+    if (!project || scanning) return;
+    setScanning(true);
+    try {
+      const result = await api.rescanProject(project.path);
+      setRescanned({ path: result.path, stack: result.stack });
+      toast.push(
+        result.stack
+          ? { tone: "success", title: `Detected ${result.stack.framework}`, detail: tildePath(result.path) }
+          : { tone: "info", title: "Nothing recognisable in this folder", detail: tildePath(result.path) },
+      );
+    } catch (error) {
+      toast.push({ tone: "error", title: "Could not scan that folder", detail: api.errorMessage(error) });
+    } finally {
+      setScanning(false);
+    }
+  }
+
   return (
     <Drawer
       open={project !== null}
@@ -116,11 +143,26 @@ export function ProjectDrawer({
               port. Read-only detection: nothing is executed and nothing is written into
               the repository. An unrecognised folder says so instead of guessing. */}
           <section data-testid="drawer-stack">
-            {project.stack ? (
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <h3 className="text-[10px] font-medium uppercase tracking-[0.18em] text-faint">
+                what runs here
+              </h3>
+              <Button
+                variant="ghost"
+                onClick={() => void scanAgain()}
+                busy={scanning}
+                disabled={scanning}
+                data-testid="drawer-rescan"
+                aria-label="Scan this folder again to detect its framework"
+              >
+                scan again
+              </Button>
+            </div>
+            {stack ? (
               <>
                 <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
-                  <Chip tone="muted">{project.stack.framework}</Chip>
-                  {project.stack.confidence === "low" ? (
+                  <Chip tone="muted">{stack.framework}</Chip>
+                  {stack.confidence === "low" ? (
                     <span className="text-[11px] text-faint">
                       inferred from the dependencies, not from a script
                     </span>
@@ -128,7 +170,7 @@ export function ProjectDrawer({
                 </div>
                 <CodeBlock
                   label="starts this project on the port these aliases point at"
-                  value={project.stack.command}
+                  value={stack.command}
                   what="command"
                   data-testid="drawer-command"
                 />

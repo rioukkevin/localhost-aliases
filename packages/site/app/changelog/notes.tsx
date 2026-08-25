@@ -1,12 +1,28 @@
 /**
- * Release notes are markdown written by whoever cut the release. Rather than pull in a
- * markdown pipeline for the three constructs release notes actually use, this handles
- * headings, bullets and paragraphs, and hands each line to the docs' inline renderer —
- * which escapes everything (React) and refuses non-http hrefs.
+ * Release notes are the GitHub release body: markdown, written by whoever cut the release —
+ * or, once the workflow generates them, by a model reading the commit log. Either way it is
+ * REMOTE INPUT rendered into a page.
+ *
+ * Rather than a markdown pipeline, this handles the five constructs release notes actually
+ * use — headings, bullets, paragraphs, fenced code and rules — and hands every inline run to
+ * the docs' renderer, which escapes everything (React) and refuses non-http hrefs. Fenced
+ * code matters specifically: the publish step writes the checksum and the verify commands
+ * inside ``` fences, and a parser that did not know about them would print the backticks and
+ * reflow a shell command into prose.
  */
 import { Inline } from "../docs/blocks.tsx";
 
-type NoteBlock = { kind: "heading"; text: string } | { kind: "list"; items: string[] } | { kind: "p"; text: string };
+export type NoteBlock =
+  | { kind: "heading"; text: string }
+  | { kind: "list"; items: string[] }
+  | { kind: "p"; text: string }
+  | { kind: "code"; text: string }
+  | { kind: "rule" };
+
+const HEADING = /^#{1,6}\s+(.*)$/;
+const BULLET = /^[-*]\s+(.*)$/;
+const FENCE = /^(```|~~~)/;
+const RULE = /^(---+|\*\*\*+|___+)$/;
 
 /** Exported for testing: notes come off the network, so the parse is worth pinning down. */
 export function parseNotes(notes: string): NoteBlock[] {
@@ -25,29 +41,66 @@ export function parseNotes(notes: string): NoteBlock[] {
     }
   };
 
-  for (const raw of notes.split("\n")) {
+  const lines = notes.split("\n");
+  let inFence = false;
+  let fence: string[] = [];
+
+  for (const raw of lines) {
+    // Inside a fence nothing is markup: a `# comment` in a shell snippet is a comment.
+    if (inFence) {
+      if (FENCE.test(raw.trim())) {
+        const text = fence.join("\n").replace(/\s+$/, "");
+        if (text !== "") blocks.push({ kind: "code", text });
+        fence = [];
+        inFence = false;
+        continue;
+      }
+      fence.push(raw);
+      continue;
+    }
+
     const line = raw.trim();
+
+    if (FENCE.test(line)) {
+      flush();
+      inFence = true;
+      continue;
+    }
     if (line === "") {
       flush();
       continue;
     }
-    const heading = /^#{1,6}\s+(.*)$/.exec(line);
+    if (RULE.test(line)) {
+      flush();
+      blocks.push({ kind: "rule" });
+      continue;
+    }
+
+    const heading = HEADING.exec(line);
     if (heading?.[1] !== undefined) {
       flush();
       blocks.push({ kind: "heading", text: heading[1] });
       continue;
     }
-    const bullet = /^[-*]\s+(.*)$/.exec(line);
+
+    const bullet = BULLET.exec(line);
     if (bullet?.[1] !== undefined) {
       if (paragraph.length > 0) flush();
       items.push(bullet[1]);
       continue;
     }
+
     if (items.length > 0) flush();
     paragraph.push(line);
   }
 
+  // An unterminated fence still has content; print it rather than swallow it.
+  if (inFence) {
+    const text = fence.join("\n").replace(/\s+$/, "");
+    if (text !== "") blocks.push({ kind: "code", text });
+  }
   flush();
+
   return blocks;
 }
 
@@ -63,6 +116,16 @@ export function ReleaseNotes({ notes }: { notes: string }) {
             <h3 className="text-[10px] font-medium uppercase tracking-[0.16em] text-faint" key={i}>
               {block.text}
             </h3>
+          );
+        }
+        if (block.kind === "rule") {
+          return <hr className="border-0 border-t border-hairline" key={i} />;
+        }
+        if (block.kind === "code") {
+          return (
+            <div className="border border-hairline-strong bg-sunken" key={i}>
+              <pre className="mono overflow-x-auto px-3 py-2.5 text-[12px] leading-relaxed text-ink">{block.text}</pre>
+            </div>
           );
         }
         if (block.kind === "list") {

@@ -61,8 +61,10 @@ jobs:
             echo "packages/site has no unit tests yet"
           fi
 
-      # The build must succeed with no manifest and no blob URL: until the first release is
-      # published, `releases/latest.json` does not exist and the site shows the build-from-source
-      # instructions instead. Leaving the var empty here keeps that path exercised on every PR.
+      # The build must succeed with no release to read: the site resolves versions from the
+      # GitHub API (docs/SITE.md), the repo has no tags yet, and an unauthenticated build is
+      # also the one that gets rate-limited first. No GITHUB_TOKEN is set here on purpose, so
+      # every PR exercises the empty path — the one that shows build-from-source instructions
+      # instead of a dead download button.
       - name: Build
         run: bun run --cwd packages/site build

@@ -1,85 +1,76 @@
 import type { Metadata } from "next";
+import Link from "next/link";
+import { BuildFromSource } from "../../components/download/BuildFromSource.tsx";
+import { Checksum } from "../../components/download/Checksum.tsx";
+import { GITHUB_RELEASES_URL } from "../../components/site/links.ts";
 import { Chip } from "../../components/ui/Chip.tsx";
-import { CodeBlock } from "../../components/ui/CodeBlock.tsx";
-import { CopyButton } from "../../components/ui/CopyButton.tsx";
 import { IconDownload } from "../../components/ui/Icons.tsx";
-import { LinkButton } from "../../components/ui/LinkButton.tsx";
 import { Panel } from "../../components/ui/Panel.tsx";
-import { GITHUB_URL } from "../../components/site/links.ts";
+import { ARCHITECTURE } from "../../lib/product.ts";
 import { formatDate, formatSize, getAllReleases, type Release } from "../../lib/releases.ts";
 import { ReleaseNotes } from "./notes.tsx";
 
 export const metadata: Metadata = {
   title: "Changelog",
-  description: "Every published build of Localhost Aliases, with its download and its sha256.",
+  description: "Every published release of Localhost Aliases, from its GitHub releases — notes, download and sha256.",
   alternates: { canonical: "/changelog" },
 };
 
-const CAPS = "text-[10px] font-medium uppercase tracking-[0.16em] text-faint";
+const LINK = "text-ink underline decoration-hairline-strong underline-offset-2 hover:decoration-accent";
 
-/**
- * The download details. The sha256 is shown in full rather than shortened: a checksum you
- * have to click to reveal is a checksum nobody verifies.
- */
-function Download({ release }: { release: Release }) {
-  return (
-    <div className="border border-hairline-strong bg-sunken">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-hairline px-3 py-2.5">
-        <a
-          className="mono inline-flex items-center gap-2 text-[13px] text-ink underline decoration-hairline-strong underline-offset-2 hover:decoration-accent"
-          href={release.dmg.url}
-        >
-          <IconDownload />
-          {release.dmg.filename}
-        </a>
-        <span className="mono text-[11px] text-faint">{formatSize(release.dmg.size)}</span>
-        {release.minimumMacOS !== null && (
-          <span className="mono text-[11px] text-faint">macOS {release.minimumMacOS}+</span>
-        )}
-        {/* The tray is compiled with an arm64-only Swift target and CI runs on an Apple Silicon
-            runner, so every published DMG is arm64. The manifest schema carries no arch field. */}
-        <span className="mono text-[11px] text-faint">Apple Silicon</span>
-      </div>
+/** The artifact strip: the file, what it is, and the checksum to compare it against. */
+function Artifact({ release }: { release: Release }) {
+  const { dmg } = release;
 
-      <div className="flex items-start gap-2 px-3 py-2.5">
-        <div className="min-w-0 flex-1">
-          <p className={CAPS}>sha256</p>
-          <p className="mono mt-1 break-all text-[11px] leading-relaxed text-muted">{release.dmg.sha256}</p>
-        </div>
-        <CopyButton className="border-0 bg-transparent" value={release.dmg.sha256} what="checksum" />
-      </div>
-
-      <p className="border-t border-hairline px-3 py-2 text-[11px] leading-relaxed text-faint">
-        Verify it before you open it: <code className="mono text-muted">shasum -a 256 {release.dmg.filename}</code>
+  if (dmg === null) {
+    return (
+      <p className="border border-hairline-strong bg-sunken px-3 py-2.5 text-[12px] leading-relaxed text-muted">
+        No disk image is attached to this release, so there is nothing to download here.{" "}
+        <a className={LINK} href={release.htmlUrl} rel="noreferrer noopener" target="_blank">
+          The release on GitHub
+        </a>{" "}
+        is the source of truth for what it does carry.
       </p>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border border-hairline-strong bg-sunken px-3 py-2.5">
+        <a className={`mono inline-flex items-center gap-2 text-[13px] ${LINK}`} href={dmg.url}>
+          <IconDownload />
+          {dmg.filename}
+        </a>
+        <span className="mono text-[11px] text-faint">{formatSize(dmg.size)}</span>
+        <span className="mono text-[11px] text-faint">macOS {release.minimumMacOS}+</span>
+        {/* The tray is compiled with an arm64-only Swift target, so every build is arm64.
+            The API carries no architecture field and none is invented here. */}
+        <span className="mono text-[11px] text-faint">{ARCHITECTURE}</span>
+      </div>
+      <Checksum filename={dmg.filename} sha256={dmg.sha256} />
     </div>
   );
 }
 
 /**
- * Today's real state: nothing has been published. Show how to build the thing rather than a
- * download button that 404s.
+ * Today's real state: the repository has no tags and no releases, and the API answers 404.
+ * That is not an error to apologise for — it is the state of the project — so the page says
+ * so and offers the thing that does exist.
  */
 function NothingPublished() {
   return (
-    <Panel meta="0 builds" title="No releases yet">
+    <Panel meta="0 releases" title="No releases yet">
       <div className="flex flex-col gap-4">
         <p className="max-w-2xl text-[13px] leading-relaxed text-muted">
-          Nothing has been published to a release feed, so there is no download here — and nothing has been code-signed
-          or notarized. Build it from source instead: it is a few commands, and you get to read what you are about to
-          run as root before you run it.
+          Nothing has been tagged or published on GitHub, so there is no history to show — and nothing has been
+          code-signed or notarized. Build it from source instead: you get to read what is about to run as root before
+          you run it.
         </p>
-        <CodeBlock
-          label="build from source"
-          value={"git clone https://github.com/rioukkevin/localhost-aliases.git\ncd localhost-aliases\nbun install && make bundle && make install"}
-          what="commands"
-        />
-        <div className="flex flex-wrap gap-2">
-          <LinkButton href="/docs/installation">Installation guide</LinkButton>
-          <LinkButton href={GITHUB_URL} variant="ghost">
-            Source on GitHub
-          </LinkButton>
-        </div>
+        <BuildFromSource />
+        <p className="text-[12px] leading-relaxed text-faint">
+          When a release exists it appears here automatically, notes and checksum included, within five minutes of
+          being published. There is no auto-update in the app: this page is how you find out.
+        </p>
       </div>
     </Panel>
   );
@@ -93,7 +84,11 @@ export default async function ChangelogPage() {
       <header className="mb-7">
         <h1 className="text-[22px] font-semibold tracking-tight text-ink md:text-[26px]">Changelog</h1>
         <p className="mt-1.5 max-w-xl text-[13px] leading-relaxed text-muted">
-          Every published build, newest first, with the checksum of the file you are about to download.
+          Every published release, newest first, straight from{" "}
+          <a className={LINK} href={GITHUB_RELEASES_URL} rel="noreferrer noopener" target="_blank">
+            GitHub releases
+          </a>
+          , with the checksum of the file you are about to download.
         </p>
       </header>
 
@@ -102,21 +97,49 @@ export default async function ChangelogPage() {
       ) : (
         <ol className="flex flex-col gap-8">
           {releases.map((release, i) => (
-            <li key={release.version}>
+            <li key={release.tag}>
               <Panel
-                aside={i === 0 ? <Chip tone="accent">latest</Chip> : undefined}
-                meta={<time dateTime={release.publishedAt}>{formatDate(release.publishedAt)}</time>}
+                aside={
+                  <div className="flex items-center gap-2">
+                    {release.prerelease ? <Chip tone="down">pre-release</Chip> : null}
+                    {i === 0 ? <Chip tone="accent">latest</Chip> : null}
+                  </div>
+                }
+                id={release.tag}
+                meta={
+                  release.publishedAt !== "" ? (
+                    <time dateTime={release.publishedAt}>{formatDate(release.publishedAt)}</time>
+                  ) : undefined
+                }
                 title={release.tag}
               >
                 <div className="flex flex-col gap-5">
-                  <ReleaseNotes notes={release.notes} />
-                  <Download release={release} />
+                  {release.notes.trim() === "" ? (
+                    <p className="text-[13px] leading-relaxed text-faint">
+                      This release was published without notes.{" "}
+                      <a className={LINK} href={release.htmlUrl} rel="noreferrer noopener" target="_blank">
+                        See it on GitHub
+                      </a>
+                      .
+                    </p>
+                  ) : (
+                    <ReleaseNotes notes={release.notes} />
+                  )}
+                  <Artifact release={release} />
                 </div>
               </Panel>
             </li>
           ))}
         </ol>
       )}
+
+      <p className="mt-8 max-w-2xl text-[13px] leading-relaxed text-muted">
+        The{" "}
+        <Link className={LINK} href="/download">
+          download page
+        </Link>{" "}
+        always points at the latest release and says what Gatekeeper will do with it.
+      </p>
     </div>
   );
 }
