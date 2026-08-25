@@ -70,10 +70,21 @@ It is bounded by validation the agent performs itself, never trusting the file
 Nothing named in the file is ever executed. See
 [`packages/privileged/README.md`](packages/privileged/README.md) for the full surface.
 
-### `http://` only
+### `https://`, optionally
 
-The forwarder never sees inside the traffic, so it cannot terminate TLS. **Project aliases are
-`http://` only.** `https://` is possible for the dashboard alone, because we own that server.
+Off by default; turn it on in Settings and every alias also answers on `https://`, with `http://`
+still working so nothing you have bookmarked breaks.
+
+This is possible because **each alias owns its own loopback address**. A listener on
+`127.0.0.3:443` already knows which alias it is, so it presents that certificate without reading
+a byte — no SNI parsing, no HTTP parsing. After the handshake it is the same raw splice, which is
+why WebSockets and HMR keep working.
+
+The certificate is issued automatically. The one step that is not automatic is trusting the local
+authority that signs it: macOS asks for your keychain password, and an app that installs a trusted
+root without asking would be indistinguishable from malware. Settings shows the exact command.
+
+Firefox keeps its own list of trusted authorities and will still warn until you add it there too.
 
 ## Install
 

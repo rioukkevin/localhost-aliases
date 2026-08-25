@@ -56,6 +56,7 @@ import { autoApplyScheduler } from "./auto-apply-runtime.ts";
 import { NotFoundError, invalid } from "./http.ts";
 import { buildDesiredStateWithHints, forgetStackFor, stackForProject } from "./stack-hints.ts";
 import { writeRuntimeFiles } from "./runtime-files.ts";
+import { ensureTls, type TlsState } from "./tls.ts";
 import { readSystemState, type SystemProbes } from "./system.ts";
 import type { AutoApply, AutoApplyStatus } from "./auto-apply.ts";
 
@@ -95,8 +96,12 @@ export interface StateSnapshot {
   /** Dashboard's own hostname, e.g. "index.test". */
   dashboardHostname: string;
   capacity: { used: number; total: number; remaining: number };
-  /** Raw bytes are forwarded, so TLS can never be terminated for project aliases. */
-  httpsSupportedForAliases: false;
+  /**
+   * Certificate state. https for project aliases IS supported: every alias owns a loopback
+   * address, so a listener on <ip>:443 knows which alias it is without reading a byte, and
+   * terminates TLS before the same byte splice as ever.
+   */
+  tls: TlsState;
   configDir: string;
   /** Where automatic apply stands, so the UI can be honest instead of guessing. */
   autoApply: AutoApplyStatus;
@@ -173,18 +178,22 @@ export async function sync(options: ServiceOptions = {}): Promise<{
   desired: DesiredState;
   system: SystemState;
   report: SyncReport;
+  tls: TlsState;
 }> {
   const config = await loadConfig();
   // Hints ride along on the routes so the root agent can print "run `next dev -p 3000`"
   // on its inline 503 without ever opening the user's project folders itself.
   const desired = await buildDesiredStateWithHints(config);
+  // Before routes.json: a TLS route whose certificate does not exist yet is a listener that
+  // fails to bind, and the user would see it as "https just does not work".
+  const tls = await ensureTls(config, desired);
   await writeRuntimeFiles(desired);
   const live = await readSystemState(desired, options.probes);
-  return { config, desired, system: live.system, report: reportFrom(live.diff) };
+  return { config, desired, system: live.system, report: reportFrom(live.diff), tls };
 }
 
 export async function getState(options: ServiceOptions = {}): Promise<StateSnapshot> {
-  const { config, desired, system, report } = await sync(options);
+  const { config, desired, system, report, tls } = await sync(options);
   // A poll settles an in-flight run and reports where things stand. It can never queue:
   // status() has no path to the request file.
   const scheduler = schedulerFor(options);
@@ -201,7 +210,7 @@ export async function getState(options: ServiceOptions = {}): Promise<StateSnaps
       total: POOL_SIZE,
       remaining: Math.max(0, POOL_SIZE - config.aliases.length),
     },
-    httpsSupportedForAliases: false,
+    tls,
     configDir: configDir(),
     autoApply,
   };

@@ -201,7 +201,10 @@ describe("link_project", () => {
 describe("get_usage_instructions", () => {
   test("is accurate about v2 and needs no dashboard", async () => {
     const out = body(await tools.usageInstructions());
-    expect(out).toContain("http:// only");
+    // https is optional now. What the model must not do is assume a scheme — the alias's
+    // own url field is the answer, because https depends on a setting and a trust step.
+    expect(out).toMatch(/https:\/\//);
+    expect(out).toMatch(/url/);
     expect(out).toContain("ifconfig lo0 alias");
     expect(out).toContain("ONCE PER APP LAUNCH");
     expect(out).toContain("ROOT AGENT");

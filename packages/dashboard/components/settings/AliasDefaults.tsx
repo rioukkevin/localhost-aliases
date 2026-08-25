@@ -153,8 +153,8 @@ export function AliasDefaults() {
             setDirty(true);
             setHttps(next);
           }}
-          label="Serve the dashboard over https"
-          hint="Dashboard only. Project aliases are raw TCP forwards, so they can never be https."
+          label="Serve aliases over https"
+          hint="Every alias also answers on https. http keeps working, so nothing you have bookmarked breaks."
           data-testid="https-toggle"
         />
       </div>

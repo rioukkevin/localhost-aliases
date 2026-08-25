@@ -55,7 +55,7 @@ describe("structure", () => {
     expect(FAQ_ITEMS.map((item) => item.id)).toEqual([
       "why-not-edit-hosts",
       "what-runs-as-root",
-      "http-only",
+      "https",
       "test-not-local",
       "hmr-websockets",
       "reboot",
@@ -144,13 +144,16 @@ describe("claims that must stay true", () => {
     expect(text).toContain("127.0.0.254");
   });
 
-  test("http:// only, with the structural reason", () => {
-    const text = answerText("http-only");
-    expect(text).toContain("`http://` only");
-    expect(text).toMatch(/never parses|raw TCP bytes/);
-    expect(text).toMatch(/terminate TLS/);
-    // The dashboard exception is real and is the only https:// claim allowed.
-    expect(text).toContain("https://index.test");
+  test("https is offered, with the reason it is possible and the step that is not automatic", () => {
+    const text = answerText("https");
+    // Why it works despite the raw splice: the address identifies the alias.
+    expect(text).toMatch(/loopback address/);
+    expect(text).toMatch(/without reading a single byte|no .Host. header is parsed/i);
+    // http must keep working, or turning https on would break bookmarks.
+    expect(text).toMatch(/`http:\/\/` keeps working/);
+    // The two things a user will otherwise discover the hard way.
+    expect(text).toMatch(/keychain password/);
+    expect(text).toMatch(/Firefox/);
   });
 
   test("the .local answer carries the measured number, not a vibe", () => {

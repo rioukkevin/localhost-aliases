@@ -5,6 +5,7 @@ export * from "./ips.ts";
 export * from "./hosts.ts";
 export * from "./store.ts";
 export * from "./desired-state.ts";
+export * from "./certs.ts";
 export * from "./probe.ts";
 export * from "./workspace.ts";
 export * from "./stack.ts";

@@ -214,9 +214,9 @@ const howItWorks: DocPage = {
         },
         {
           kind: "note",
-          tone: "warn",
-          title: "Project aliases are http:// only",
-          text: "We never see the traffic, so we cannot terminate TLS. `https://myapp.test` will not work and cannot be made to work by this design. `https://` is available for the dashboard alone, because that is a server we run ourselves — the optional step in onboarding generates a local CA and trusts it in your login keychain. Firefox uses its own certificate store and is not covered by that.",
+          tone: "info",
+          title: "https:// is optional, and off by default",
+          text: "Aliases always answer on `http://`. Turn https on in Settings and they answer on `https://` too, without losing `http://`. Terminating TLS is possible despite the raw splice because each alias owns its own loopback address: a listener on `127.0.0.3:443` identifies the alias from the address, so it presents that certificate without parsing a `Host` header or inspecting SNI. The certificate is issued and renewed for you; telling your Mac to trust the authority that signed it is the one manual step, because macOS asks for your keychain password. Firefox uses its own certificate store and needs that step separately.",
         },
       ],
     },

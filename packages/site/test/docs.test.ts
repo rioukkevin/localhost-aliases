@@ -90,7 +90,8 @@ describe("doc pages", () => {
     const text = JSON.stringify(DOC_PAGES).toLowerCase();
     expect(text).toContain("127.0.0.2");
     expect(text).toContain("raw bytes");
-    expect(text).toContain("http:// only");
+    // https is optional now; what must stay true is that http always works.
+    expect(text).toMatch(/https:\/\/ is optional|answer on `http:\/\/`/);
     expect(text).toContain("# >>> localhost-aliases >>>");
     // v1's vocabulary. Either phrase would mean the docs describe an architecture we deleted.
     // (LaunchDaemon and SMAppService do appear — but only in the sentence saying there is none.)

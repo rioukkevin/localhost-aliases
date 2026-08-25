@@ -161,7 +161,10 @@ describe("state", () => {
   test("getState carries the capacity ceiling and the https limitation", async () => {
     const state = await getState(bare);
     expect(state.capacity).toEqual({ used: 1, total: 253, remaining: 252 });
-    expect(state.httpsSupportedForAliases).toBe(false);
+    // https for aliases is supported now — per-IP TLS termination needs no parsing.
+    // Off by default, so the state is "not enabled", not "not possible".
+    expect(state.tls.enabled).toBe(false);
+    expect(typeof state.tls.trustCommand).toBe("string");
     expect(state.dashboardHostname).toBe("index.test");
     expect(state.configDir).toBe(box.configDir);
   });

@@ -163,6 +163,40 @@ export interface StatusPayload {
   trayAlive: boolean | null;
   /** The auto-apply reading. `null` when the server did not publish one. */
   autoApply: AutoApplyStatus | null;
+  /** Certificate state. `null` when the server did not publish one — never a guess. */
+  tls: TlsReading | null;
+}
+
+/** What the settings page needs to say something true about the padlock. */
+export interface TlsReading {
+  enabled: boolean;
+  caReady: boolean;
+  trusted: boolean;
+  certReady: boolean;
+  expiresInDays: number | null;
+  trustCommand: string;
+  /** Why the certificate could not be prepared. Null when nothing went wrong. */
+  error: string | null;
+}
+
+/**
+ * Never invent a reading. A missing or malformed field means "we do not know", and the UI
+ * says "checking…" rather than telling the user their certificate is untrusted.
+ */
+export function toTlsReading(value: unknown): TlsReading | null {
+  if (typeof value !== "object" || value === null) return null;
+  const v = value as Record<string, unknown>;
+  if (typeof v.trustCommand !== "string") return null;
+  const days = v.expiresInDays;
+  return {
+    enabled: v.enabled === true,
+    caReady: v.caReady === true,
+    trusted: v.trusted === true,
+    certReady: v.certReady === true,
+    expiresInDays: typeof days === "number" && Number.isFinite(days) ? days : null,
+    trustCommand: v.trustCommand,
+    error: typeof v.error === "string" && v.error !== "" ? v.error : null,
+  };
 }
 
 const NO_SYNC: SyncReport = {
@@ -199,6 +233,7 @@ export async function fetchStatus(): Promise<StatusPayload> {
     capacity: body.capacity ?? { used: 0, total: 253, remaining: 253 },
     trayAlive: typeof body.trayAlive === "boolean" ? body.trayAlive : null,
     autoApply: toAutoApplyStatus(body.autoApply),
+    tls: toTlsReading(body.tls),
   };
 }
 

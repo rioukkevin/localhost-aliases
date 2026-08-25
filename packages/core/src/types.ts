@@ -123,6 +123,15 @@ export interface Route {
   /** For logging and the forwarder's status output only. */
   hostname: string;
   /**
+   * Terminate TLS on this listener rather than splicing raw bytes straight through.
+   *
+   * This is possible precisely because every alias owns its own loopback address: a listener
+   * on 127.0.0.3:443 already knows which alias it is, so it can present that certificate
+   * without reading a byte of the request. No SNI parsing, no HTTP parsing — after the
+   * handshake it is the same byte splice as ever, which is why WebSockets keep working.
+   */
+  tls?: boolean;
+  /**
    * How to start this project on `targetPort`, from packages/core/src/stack.ts. Optional and
    * purely advisory: the offline page prints it when the upstream is not listening, so the
    * root agent never has to read the user's project folders itself. Whoever writes the desired

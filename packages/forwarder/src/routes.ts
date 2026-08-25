@@ -57,6 +57,9 @@ export function parseRoutes(text: string): ParsedRoutes {
     if (seen.has(key)) return void errors.push(`route ${i}: duplicate ${key}, ignored`);
     seen.add(key);
     const route: Route = { ip: r.ip, listenPort: r.listenPort, targetPort: r.targetPort, hostname };
+    // Strictly boolean: anything else means the writer did not mean TLS, and quietly
+    // terminating TLS on a listener the caller expected to be plain is worse than not.
+    if (r.tls === true) route.tls = true;
     // Advisory only — it is printed on the offline page, never executed. A hint that is not
     // two strings is simply not a hint; it is not worth rejecting a working route over.
     const hint = r.hint as { framework?: unknown; command?: unknown } | undefined;

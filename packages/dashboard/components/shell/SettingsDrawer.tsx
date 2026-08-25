@@ -1,6 +1,7 @@
 "use client";
 
 import { AliasDefaults } from "../settings/AliasDefaults.tsx";
+import { TlsSection } from "../settings/TlsSection.tsx";
 import { AutoApplySection } from "../settings/AutoApply.tsx";
 import { LaunchAtLoginSection } from "../settings/LaunchAtLogin.tsx";
 import { McpSection } from "../settings/McpSection.tsx";
@@ -35,6 +36,7 @@ export function SettingsDrawer({ open, onClose }: { open: boolean; onClose: () =
         <LaunchAtLoginSection />
 
         <AliasDefaults />
+        <TlsSection />
 
         <McpSection />
 

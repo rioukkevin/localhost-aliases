@@ -9,10 +9,11 @@
  * When the agent is driving, file watching is off: two sources of truth for what root is
  * listening on is exactly the kind of thing that ends up bound to the wrong port.
  */
+import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import type { TCPSocketListener } from "bun";
 import type { ForwarderStatus, Route } from "@localhost-aliases/core/types";
-import { forwarderStatusPath, routesPath } from "@localhost-aliases/core/paths";
+import { aliasCertPath, aliasKeyPath, forwarderStatusPath, routesPath } from "@localhost-aliases/core/paths";
 import { type Logger, stderrLog } from "./log.ts";
 import { readRoutes, routeKey } from "./routes.ts";
 import { type SpliceSocketData, spliceHandlers } from "./splice.ts";
@@ -35,6 +36,12 @@ export interface ForwarderOptions {
   /** Seconds a half-closed, idle connection may sit before it is dropped. */
   lingerSeconds?: number;
   /**
+   * The certificate presented on TLS routes. One pair covers every alias (each hostname is a
+   * SAN), so a listener needs no knowledge beyond "am I a TLS route".
+   */
+  certPath?: string;
+  keyPath?: string;
+  /**
    * Read routes.json and watch it. False when the root agent owns the routes: it has
    * already validated them and hands them over directly.
    */
@@ -53,6 +60,10 @@ export class Forwarder {
   private readonly targetHost: string;
   private readonly pollMs: number;
   private readonly lingerSeconds: number | undefined;
+  private readonly certPath: string;
+  /** Cleared on reload so a re-issued certificate is picked up. */
+  private tlsCache: { cert: string; key: string } | null = null;
+  private readonly keyPath: string;
   private readonly watchRoutesFile: boolean;
   private readonly offlinePage: boolean;
   private readonly log: Logger;
@@ -71,6 +82,8 @@ export class Forwarder {
     this.targetHost = opts.targetHost ?? "127.0.0.1";
     this.pollMs = opts.pollMs ?? 2_000;
     this.lingerSeconds = opts.lingerSeconds;
+    this.certPath = opts.certPath ?? aliasCertPath();
+    this.keyPath = opts.keyPath ?? aliasKeyPath();
     this.watchRoutesFile = opts.watchRoutesFile ?? true;
     this.offlinePage = opts.offlinePage ?? true;
     this.log = opts.log ?? stderrLog;
@@ -136,6 +149,8 @@ export class Forwarder {
 
   private async applyRoutes(routes: readonly Route[], errors: readonly string[]): Promise<void> {
     if (this.stopped) return;
+    // The certificate may have been re-issued since the last apply.
+    this.tlsCache = null;
     const wanted = new Map(routes.map((r) => [routeKey(r), r]));
     const failures: ForwarderStatus["failures"] = [];
 
@@ -170,6 +185,20 @@ export class Forwarder {
     await this.publish();
   }
 
+  /**
+   * The certificate pair, read once and reused by every TLS route. Throws if unreadable — the
+   * caller is inside bind()'s try, so that becomes a recorded per-route failure.
+   */
+  private tlsMaterial(): { cert: string; key: string } {
+    if (!this.tlsCache) {
+      this.tlsCache = {
+        cert: readFileSync(this.certPath, "utf8"),
+        key: readFileSync(this.keyPath, "utf8"),
+      };
+    }
+    return this.tlsCache;
+  }
+
   /** One route may never take the others down: a bind error is recorded, not thrown. */
   private bind(key: string, route: Route): string | null {
     // `live` is what the handlers read, and what a reload mutates in place.
@@ -179,6 +208,14 @@ export class Forwarder {
       listener = Bun.listen<SpliceSocketData>({
         hostname: route.ip,
         port: route.listenPort,
+        // TLS terminates here and the plaintext is spliced onward unchanged.
+        //
+        // The material is read EAGERLY, before binding, rather than handed over as Bun.file.
+        // A lazy handle defers the read to the first connection, which puts a file read inside
+        // the first handshake and — worse — turns a missing certificate into an intermittent
+        // hang on someone's first request instead of a bind failure we can report. Reading it
+        // here means a bad certificate fails this one route loudly, like a port already in use.
+        ...(route.tls ? { tls: this.tlsMaterial() } : {}),
         // Survive a client's FIN so its reply can still be written back — see splice.ts.
         allowHalfOpen: true,
         data: undefined,
@@ -196,7 +233,7 @@ export class Forwarder {
       return reason;
     }
     this.bound.set(key, { route: live, listener });
-    this.log(`listening on ${key} -> ${this.targetHost}:${route.targetPort} (${route.hostname})`);
+    this.log(`listening on ${key}${route.tls ? " (tls)" : ""} -> ${this.targetHost}:${route.targetPort} (${route.hostname})`);
     return null;
   }
 

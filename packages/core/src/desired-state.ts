@@ -11,6 +11,9 @@ import { isPoolIp } from "./ips.ts";
 
 export const LISTEN_PORT = 80;
 
+/** Where TLS terminates when config.https is on. */
+export const TLS_LISTEN_PORT = 443;
+
 /** The port an alias actually forwards to: the dashboard alias mirrors dashboardPort. */
 export function targetPortFor(alias: Alias, config: Config): number {
   return alias.reserved ? config.dashboardPort : alias.port;
@@ -18,15 +21,26 @@ export function targetPortFor(alias: Alias, config: Config): number {
 
 export function buildDesiredState(config: Config): DesiredState {
   const active = config.aliases.filter((a) => a.enabled);
-  const routes: Route[] = active.map((alias) => ({
-    ip: alias.ip,
-    listenPort: LISTEN_PORT,
-    targetPort: targetPortFor(alias, config),
-    hostname: hostnameFor(alias.name, config.tld),
-  }));
+  const routes: Route[] = [];
+
+  for (const alias of active) {
+    const hostname = hostnameFor(alias.name, config.tld);
+    const targetPort = targetPortFor(alias, config);
+    routes.push({ ip: alias.ip, listenPort: LISTEN_PORT, targetPort, hostname });
+
+    // With https on, the same alias also answers on :443 with TLS terminated. Plain :80 stays
+    // bound: turning https on must not break a bookmark, a curl script, or a webhook that has
+    // no idea the certificate exists. The two routes differ only in port and the tls flag, so
+    // they get their own listeners and neither can disturb the other.
+    if (config.https) {
+      routes.push({ ip: alias.ip, listenPort: TLS_LISTEN_PORT, targetPort, hostname, tls: true });
+    }
+  }
 
   return {
-    hosts: routes.map((r) => ({ ip: r.ip, hostname: r.hostname })),
+    // One entry per hostname, not per route: /etc/hosts maps names to addresses and knows
+    // nothing about ports, so emitting :80 and :443 separately would duplicate every line.
+    hosts: [...new Map(routes.map((r) => [r.hostname, { ip: r.ip, hostname: r.hostname }])).values()],
     loopbackIps: [...new Set(routes.map((r) => r.ip))],
     routes,
   };

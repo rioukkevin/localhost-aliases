@@ -80,16 +80,16 @@ export const FAQ_ITEMS: FaqItem[] = [
   },
 
   {
-    id: "http-only",
-    question: "Why is it http:// only — can I get https?",
+    id: "https",
+    question: "Can I get https, with a real padlock?",
     blocks: [
       {
         kind: "p",
-        text: "Project aliases are `http://` only, and that is structural rather than unfinished. The forwarder splices raw TCP bytes between your browser and your dev server and never parses them: no `Host` header is read, no header is rewritten, nothing is buffered. There is nothing in that path that could present a certificate, so there is nothing that could terminate TLS.",
+        text: "Yes. Turn it on in Settings and every alias also answers on `https://`; `http://` keeps working alongside it, so nothing you have bookmarked breaks. This works because each alias owns its own loopback address — a listener on `127.0.0.3:443` already knows which alias it is, so it can present that certificate without reading a single byte of your traffic. No `Host` header is parsed, no SNI is inspected. After the handshake it is the same raw splice as ever, which is why WebSockets and HMR are unaffected.",
       },
       {
         kind: "p",
-        text: "The dashboard is the one exception, because that is a server we run ourselves. Onboarding can generate a local certificate authority and trust it in your **login** keychain, which makes `https://index.test` work. Firefox keeps its own trust store, so it is not covered by that and is told so.",
+        text: "The certificate is issued for you and renews itself. One step is deliberately not automatic: your Mac has to be told to trust the local authority that signs it, and macOS asks for your keychain password when you do. An app that quietly installs a trusted root would be indistinguishable from malware, so Settings hands you the command instead. Firefox keeps its own list of trusted authorities and will still warn until you add it there too.",
       },
       {
         kind: "note",

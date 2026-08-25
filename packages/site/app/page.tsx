@@ -48,8 +48,8 @@ export default function LandingPage() {
           <span className="mono">/etc/hosts</span>. A small root process then splices port 80 on
           that address to the port your dev server is already listening on. One admin prompt,
           nothing permanently installed, and{" "}
-          <a href="#http-only" className="text-ink underline underline-offset-4">
-            http:// only
+          <a href="#https" className="text-ink underline underline-offset-4">
+            https:// when you want it
           </a>
           .
         </p>
@@ -211,28 +211,35 @@ export default function LandingPage() {
       </Section>
 
       <Section
-        id="http-only"
-        eyebrow="a real limitation"
-        title="Project aliases are http:// only"
-        lede="This is the trade-off at the centre of the design, so it is stated here rather than discovered later."
+        id="https"
+        eyebrow="optional, off by default"
+        title="https:// with a real padlock"
+        lede="Raw byte-forwarding and TLS are not mutually exclusive here, because the address already identifies the alias."
       >
-        <Banner tone="warn" title="There is no TLS for your aliases, and there cannot be">
+        <p className="text-[13px] leading-relaxed text-muted md:text-[14px]">
+          Turn it on in Settings and every alias also answers on{" "}
+          <span className="mono">https://</span>, with <span className="mono">http://</span> still
+          bound so nothing you have bookmarked breaks. It works because each alias owns its own
+          loopback address: a listener on <span className="mono">127.0.0.3:443</span> already knows
+          which alias it is, so it presents that certificate without reading a byte. No{" "}
+          <span className="mono">Host</span> header is parsed and no SNI is inspected — after the
+          handshake it is the same raw splice, which is why WebSockets and HMR are unaffected.
+        </p>
+        <Banner tone="info" title="One step is deliberately not automatic">
           <p>
-            The forwarder moves raw bytes and never looks inside them. That is exactly why
-            WebSockets and HMR need no configuration — and it is also why it cannot terminate TLS:
-            nothing in the path ever parses a request, so there is nowhere to present a certificate
-            for <span className="mono">myapp.test</span>. Anything that requires a secure context
-            in the browser — service workers, <span className="mono">getUserMedia</span>, WebAuthn —
-            still needs <span className="mono">http://localhost</span>, which browsers treat as
-            secure.
+            The certificate is issued for you and renews itself. Telling your Mac to trust the
+            authority that signs it is not automatic: macOS asks for your keychain password, and an
+            app that silently installs a trusted root would be indistinguishable from malware.
+            Settings gives you the exact command, and{" "}
+            <span className="text-ink">Uninstall removes it again by fingerprint</span>.
           </p>
           <p className="mt-2.5">
-            <span className="mono">https://</span> works for the dashboard alone, because that
-            server is ours: onboarding can optionally generate a local CA and trust it in your{" "}
-            <span className="text-ink">login keychain</span> — a click, not a{" "}
-            <span className="mono">sudo</span> command — for{" "}
-            <span className="mono">https://index.test</span>. Firefox keeps its own trust store and
-            the flow says so.
+            Firefox keeps its own list of trusted authorities and will still warn until you add it
+            there too. Leaving https off is a perfectly good answer — everything works over{" "}
+            <span className="mono">http://</span>, with the caveat that a{" "}
+            <span className="mono">.test</span> name is not a browser &ldquo;secure context&rdquo;,
+            so service workers and <span className="mono">getUserMedia</span> need https or{" "}
+            <span className="mono">http://localhost</span>.
           </p>
         </Banner>
       </Section>

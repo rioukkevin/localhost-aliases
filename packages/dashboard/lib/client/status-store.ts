@@ -11,7 +11,7 @@
  */
 import { useSyncExternalStore } from "react";
 import type { AliasView, Config, SystemState } from "@localhost-aliases/core/types";
-import { errorMessage, fetchStatus, type AutoApplyStatus, type SyncReport } from "./api.ts";
+import { errorMessage, fetchStatus, type AutoApplyStatus, type SyncReport, type TlsReading } from "./api.ts";
 
 export const POLL_MS = 5000;
 
@@ -36,6 +36,7 @@ export interface StatusState {
    * the server publishes one, which every surface reads as idle — i.e. the manual UI.
    */
   autoApply: AutoApplyStatus | null;
+  tls: TlsReading | null;
   /** A mutation is in flight; the patchbay header shows "applying…". */
   busy: boolean;
   updatedAt: number;
@@ -51,6 +52,7 @@ const EMPTY: StatusState = {
   sync: null,
   trayAlive: null,
   autoApply: null,
+  tls: null,
   busy: false,
   updatedAt: 0,
 };
@@ -80,6 +82,7 @@ export function refreshStatus(): Promise<void> {
         sync: payload.sync,
         trayAlive: payload.trayAlive,
         autoApply: payload.autoApply,
+        tls: payload.tls,
         updatedAt: Date.now(),
       });
     })
@@ -89,7 +92,7 @@ export function refreshStatus(): Promise<void> {
       // Both readings came from the server we just lost, so neither is knowledge any
       // more. auto-apply drops to null (read as idle) rather than asserting a stale
       // "waiting for your password" about a machine we can no longer see.
-      set({ loaded: true, reachable: false, error: errorMessage(err), trayAlive: null, autoApply: null });
+      set({ loaded: true, reachable: false, error: errorMessage(err), trayAlive: null, autoApply: null, tls: null });
     })
     .finally(() => {
       inFlight = null;

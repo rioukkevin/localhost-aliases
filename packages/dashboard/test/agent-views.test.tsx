@@ -58,6 +58,7 @@ function state(over: Partial<StatusState> = {}): StatusState {
     sync: null,
     trayAlive: true,
     autoApply: null,
+    tls: null,
     busy: false,
     updatedAt: 1,
     ...over,

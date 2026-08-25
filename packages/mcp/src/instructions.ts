@@ -47,9 +47,9 @@ touches, and exits on its own when the app stops.
 
 ## Limitations, stated plainly
 
-- Project aliases are **http:// only**. The forwarder moves raw bytes and never sees the
-  traffic, so it cannot terminate TLS. Never tell the user to try https://myapp.${DEFAULT_TLD}.
-  (https:// can be offered for the dashboard alone, because we run that server ourselves.)
+- Aliases answer on **http://** always, and on **https://** when the user has turned it on in
+  Settings. Read the alias's **url** field rather than assuming a scheme: https also needs
+  the local certificate authority trusted, which only the user can do.
 - Because it is raw TCP and not an HTTP proxy, WebSockets, HMR and non-HTTP protocols all
   pass through untouched. No Host header rewriting happens, and none is needed.
 - Aliases listen on port 80 of their own loopback IP. The dev server itself keeps listening
@@ -86,7 +86,7 @@ promise the user one. When the agent is not running the tool result says so expl
 names the prompt the user must accept. Read the tool's own result rather than assuming
 either way; changing a port never prompts.
 
-Project aliases are http:// only — never suggest https:// for them.
+Use the **url** each tool returns rather than assuming a scheme: https is optional and off by default.
 
 Call get_usage_instructions when you need the full mechanism, the exact files touched, or
 how to explain to the user what is about to change on their machine.`;

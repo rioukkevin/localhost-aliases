@@ -80,6 +80,20 @@ export function dashboardKeyPath(): string {
   return join(caDir(), "dashboard-key.pem");
 }
 
+/**
+ * One certificate covers every alias, with each hostname as a SAN. One file pair instead of
+ * N keeps the forwarder trivial — every TLS listener loads the same two files — and it is
+ * re-issued whenever the hostname set changes. The tradeoff, stated plainly: this cert names
+ * all of your aliases, so presenting it to one of them reveals the others' names. On a
+ * single-user dev machine that is a non-issue; it would not be on a shared host.
+ */
+export function aliasCertPath(): string {
+  return join(caDir(), "aliases.pem");
+}
+export function aliasKeyPath(): string {
+  return join(caDir(), "aliases-key.pem");
+}
+
 export function logDir(): string {
   return process.env.LA_LOG_DIR ?? join(homedir(), "Library", "Logs", "localhost-aliases");
 }
