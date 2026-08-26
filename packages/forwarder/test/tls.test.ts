@@ -10,6 +10,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { Forwarder } from "../src/forwarder.ts";
+import { freePort, httpGet, waitFor } from "./helpers.ts";
 
 const dir = mkdtempSync("/tmp/la-fwd-tls-");
 process.env.LA_CONFIG_DIR = dir;
@@ -21,11 +22,28 @@ let tlsPort = 0;
 let plainPort = 0;
 let caPath = "";
 
-function freePort(): number {
-  const probe = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("") });
-  const port = probe.port ?? 0;
-  probe.stop(true);
-  return port;
+/**
+ * One curl run, with everything a failure needs in order to explain itself.
+ *
+ * The exit code matters as much as the output: curl prints `-w` fields even when the transfer
+ * failed, so an empty body plus `ssl_verify_result` of 0 reads exactly like a successful
+ * request whose body happened to be blank. Asserting on the output alone turns "curl could not
+ * talk to the listener" into "expected UPSTREAM /hello, received 0", which says nothing.
+ */
+async function curl(args: string[]): Promise<{ out: string; err: string; code: number }> {
+  const proc = Bun.spawn(["curl", "-sS", "--max-time", "20", ...args], { stdout: "pipe", stderr: "pipe" });
+  const [out, err] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
+  return { out: out.trim(), err: err.trim(), code: await proc.exited };
+}
+
+/** curl at a TLS route, or throw with curl's own reason. */
+async function tls(args: string[]): Promise<string> {
+  const { out, err, code } = await curl(["--cacert", caPath, ...args]);
+  if (code !== 0) throw new Error(`curl exited ${code}: ${err || "no stderr"}`);
+  return out;
 }
 
 beforeAll(async () => {
@@ -62,6 +80,26 @@ beforeAll(async () => {
     offlinePage: false,
   });
   await forwarder.start();
+
+  // BOUND IS NOT THE SAME AS ANSWERING. start() waits for the reconcile, and the log says
+  // "listening" — but the first connection can still arrive before the listener will serve it,
+  // and reload() swallows a bind failure into a log line, so start() resolving proves less
+  // than it looks. CI is where that gap is wide enough to see: this file failed there with an
+  // empty reply for ten seconds while the very next test, on the same port, passed in 8ms.
+  //
+  // So prove both routes actually answer before any assertion depends on it. This is the
+  // pattern the rest of the suite already uses (agent-process.test.ts).
+  await waitFor(async () => (await httpGet(plainPort, "/plain").catch(() => "")) === "UPSTREAM /plain", {
+    timeoutMs: 20_000,
+    what: "the plain route to answer",
+  });
+  await waitFor(
+    async () =>
+      (await tls(["--resolve", `shop.test:${tlsPort}:127.0.0.1`, `https://shop.test:${tlsPort}/hello`]).catch(
+        () => "",
+      )) === "UPSTREAM /hello",
+    { timeoutMs: 20_000, what: "the tls route to answer" },
+  );
 });
 
 afterAll(async () => {
@@ -73,13 +111,9 @@ afterAll(async () => {
 
 describe("TLS termination", () => {
   test("serves https with a certificate that verifies against our CA", async () => {
-    const proc = Bun.spawn(
-      ["curl", "-sS", "--retry", "2", "--retry-connrefused", "--max-time", "20", "--cacert", caPath, "--resolve", `shop.test:${tlsPort}:127.0.0.1`,
-       "-w", "\\n%{ssl_verify_result}", `https://shop.test:${tlsPort}/hello`],
-      { stdout: "pipe", stderr: "pipe" },
-    );
-    const out = (await new Response(proc.stdout).text()).trim().split("\n");
-    await proc.exited;
+    const out = (
+      await tls(["--resolve", `shop.test:${tlsPort}:127.0.0.1`, "-w", "\\n%{ssl_verify_result}", `https://shop.test:${tlsPort}/hello`])
+    ).split("\n");
     expect(out[0]).toBe("UPSTREAM /hello");
     // 0 is openssl's "verified". Anything else is a browser warning.
     expect(out[1]).toBe("0");
@@ -91,15 +125,14 @@ describe("TLS termination", () => {
   }, 20000);
 
   test("a wrong hostname fails verification, as it must", async () => {
-    const proc = Bun.spawn(
-      ["curl", "-sS", "--retry", "2", "--retry-connrefused", "--max-time", "20", "--cacert", caPath, "--resolve", `evil.test:${tlsPort}:127.0.0.1`,
-       "-o", "/dev/null", "-w", "%{ssl_verify_result}", `https://evil.test:${tlsPort}/`],
-      { stdout: "pipe", stderr: "ignore" },
-    );
-    const code = (await new Response(proc.stdout).text()).trim();
-    await proc.exited;
+    // The only test here that wants a curl failure, so it reads the raw result rather than
+    // going through tls(), which throws on one.
+    const { out } = await curl([
+      "--cacert", caPath, "--resolve", `evil.test:${tlsPort}:127.0.0.1`,
+      "-o", "/dev/null", "-w", "%{ssl_verify_result}", `https://evil.test:${tlsPort}/`,
+    ]);
     // Non-zero, or curl refused outright — either way it is not a silent pass.
-    expect(code === "0").toBe(false);
+    expect(out === "0").toBe(false);
   }, 20000);
 
   test("arbitrary bytes cross the TLS boundary intact, both ways", async () => {
@@ -115,13 +148,15 @@ describe("TLS termination", () => {
     // TLS termination is covered by the tests above; this covers the join between them.
     const payload = "x".repeat(1024 * 1024);
     const proc = Bun.spawn(
-      ["curl", "-sS", "--retry", "2", "--retry-connrefused", "--max-time", "20", "--cacert", caPath, "--resolve", `shop.test:${tlsPort}:127.0.0.1`,
+      ["curl", "-sS", "--max-time", "20", "--cacert", caPath, "--resolve", `shop.test:${tlsPort}:127.0.0.1`,
        "-X", "POST", "--data-binary", "@-", "-o", "/dev/null",
        "-w", "%{size_upload} %{ssl_verify_result}", `https://shop.test:${tlsPort}/echo`],
-      { stdin: new TextEncoder().encode(payload), stdout: "pipe", stderr: "ignore" },
+      { stdin: new TextEncoder().encode(payload), stdout: "pipe", stderr: "pipe" },
     );
     const [uploaded, verify] = (await new Response(proc.stdout).text()).trim().split(" ");
-    await proc.exited;
+    if ((await proc.exited) !== 0) {
+      throw new Error(`curl failed: ${(await new Response(proc.stderr).text()).trim() || "no stderr"}`);
+    }
     expect(Number(uploaded)).toBe(payload.length);
     expect(verify).toBe("0");
   }, 25000);
