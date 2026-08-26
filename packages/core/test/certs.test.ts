@@ -112,3 +112,46 @@ describe("buildSans", () => {
     ]);
   });
 });
+
+/**
+ * The renewal schedule, stated as tests rather than left implicit in two constants. A
+ * certificate that expires under someone is the failure this whole mechanism exists to avoid.
+ */
+describe("the renewal schedule is annual, with slack", () => {
+  test("renewal starts on day 367 — under a year, with a month spare", () => {
+    expect(certs.RENEW_ON_DAY).toBe(367);
+    expect(certs.RENEW_ON_DAY).toBeLessThan(365 + 7);
+    // Slack matters: renewal only runs while the app is open.
+    expect(certs.LEAF_DAYS - certs.RENEW_ON_DAY).toBeGreaterThanOrEqual(30);
+  });
+
+  test("a fresh certificate is left alone for most of the year", async () => {
+    await certs.issueAliasCert(["shop.test"]);
+    const day = (n: number) => Date.now() + n * 86_400_000;
+    expect(await certs.certNeedsReissue(["shop.test"], day(1))).toBe(false);
+    expect(await certs.certNeedsReissue(["shop.test"], day(200))).toBe(false);
+    expect(await certs.certNeedsReissue(["shop.test"], day(360))).toBe(false);
+  });
+
+  test("and renewed once it enters the window, or after it has lapsed", async () => {
+    await certs.issueAliasCert(["shop.test"]);
+    const day = (n: number) => Date.now() + n * 86_400_000;
+    expect(await certs.certNeedsReissue(["shop.test"], day(370))).toBe(true);
+    // Already expired — the app was closed through the whole window. Still recoverable.
+    expect(await certs.certNeedsReissue(["shop.test"], day(400))).toBe(true);
+    expect(await certs.certNeedsReissue(["shop.test"], day(1000))).toBe(true);
+  });
+
+  test("renewing produces a genuinely different certificate, not the same bytes", async () => {
+    await certs.issueAliasCert(["shop.test"]);
+    const first = await Bun.file(paths.aliasCertPath()).text();
+    await Bun.sleep(1100); // openssl's serial counter has one-second resolution
+    await certs.issueAliasCert(["shop.test"]);
+    const second = await Bun.file(paths.aliasCertPath()).text();
+    expect(second).not.toBe(first);
+    // Still ours, and still inside Apple's ceiling.
+    const days = (await certs.certExpiresInMs())! / 86_400_000;
+    expect(days).toBeGreaterThan(390);
+    expect(days).toBeLessThan(398);
+  }, 15000);
+});

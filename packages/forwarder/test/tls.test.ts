@@ -126,3 +126,72 @@ describe("TLS termination", () => {
     expect(verify).toBe("0");
   }, 25000);
 });
+
+/**
+ * Renewal is worthless if the wire never sees it. Bun.listen bakes the certificate in at
+ * listen time, so a listener bound a year ago keeps presenting the expired one no matter what
+ * is on disk — and the dashboard would cheerfully report a fresh certificate the whole time.
+ * This is the test that failed before the rebind existed.
+ */
+describe("certificate renewal reaches the wire", () => {
+  test("a re-issued certificate is actually served, without restarting the app", async () => {
+    const dir2 = mkdtempSync("/tmp/la-renew-test-");
+    const previous = process.env.LA_CONFIG_DIR;
+    process.env.LA_CONFIG_DIR = dir2;
+    try {
+      const core = await import("@localhost-aliases/core");
+      const up = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("ok") });
+      const port = freePort();
+      const routesFile = join(dir2, "routes.json");
+      const routes = [
+        { ip: "127.0.0.1", listenPort: port, targetPort: up.port, hostname: "shop.test", tls: true },
+      ];
+
+      await core.issueAliasCert(["shop.test"], ["127.0.0.1"]);
+      await Bun.write(routesFile, JSON.stringify(routes));
+      const fwd = new Forwarder({
+        routesFile,
+        statusFile: join(dir2, "s.json"),
+        offlinePage: false,
+        pollMs: 300,
+      });
+      await fwd.start();
+
+      const served = async (): Promise<string> => {
+        const proc = Bun.spawn(
+          ["bash", "-c",
+           `echo | openssl s_client -connect 127.0.0.1:${port} -servername shop.test 2>/dev/null ` +
+           "| openssl x509 -noout -serial"],
+          { stdout: "pipe", stderr: "ignore" },
+        );
+        const out = await new Response(proc.stdout).text();
+        await proc.exited;
+        return out.trim();
+      };
+
+      const before = await served();
+      expect(before).toMatch(/^serial=/);
+
+      // openssl's serial comes from a counter file, so a re-issue a second later is a
+      // genuinely different certificate — exactly what the yearly renewal produces.
+      await Bun.sleep(1100);
+      await core.issueAliasCert(["shop.test"], ["127.0.0.1"]);
+      await Bun.write(routesFile, JSON.stringify(routes)); // the sync that follows a renewal
+
+      let after = before;
+      const deadline = Date.now() + 10_000;
+      while (after === before && Date.now() < deadline) {
+        await Bun.sleep(250);
+        after = await served();
+      }
+
+      expect(after).not.toBe(before);
+      await fwd.stop();
+      up.stop(true);
+    } finally {
+      if (previous === undefined) delete process.env.LA_CONFIG_DIR;
+      else process.env.LA_CONFIG_DIR = previous;
+      rmSync(dir2, { recursive: true, force: true });
+    }
+  }, 30000);
+});

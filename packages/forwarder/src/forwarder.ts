@@ -9,7 +9,7 @@
  * When the agent is driving, file watching is off: two sources of truth for what root is
  * listening on is exactly the kind of thing that ends up bound to the wrong port.
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { basename } from "node:path";
 import type { TCPSocketListener } from "bun";
 import type { ForwarderStatus, Route } from "@localhost-aliases/core/types";
@@ -63,6 +63,8 @@ export class Forwarder {
   private readonly certPath: string;
   /** Cleared on reload so a re-issued certificate is picked up. */
   private tlsCache: { cert: string; key: string } | null = null;
+  /** Last seen certificate stamp. Null until the first apply, so startup is not a renewal. */
+  private tlsStamp$: string | null = null;
   private readonly keyPath: string;
   private readonly watchRoutesFile: boolean;
   private readonly offlinePage: boolean;
@@ -149,8 +151,24 @@ export class Forwarder {
 
   private async applyRoutes(routes: readonly Route[], errors: readonly string[]): Promise<void> {
     if (this.stopped) return;
-    // The certificate may have been re-issued since the last apply.
-    this.tlsCache = null;
+
+    // Renewal only reaches the wire through a rebind. Bun.listen bakes the certificate in at
+    // listen time, so a listener bound a year ago keeps presenting the old one no matter what
+    // is on disk — which would expire silently while the dashboard reported a fresh
+    // certificate. Notice the change, drop the cached material, and force those routes to be
+    // rebuilt below.
+    const stamp = this.tlsStamp();
+    const renewed = this.tlsStamp$ !== null && stamp !== "" && stamp !== this.tlsStamp$;
+    this.tlsStamp$ = stamp;
+    if (renewed) {
+      this.tlsCache = null;
+      for (const [key, entry] of [...this.bound]) {
+        if (!entry.route.tls) continue;
+        entry.listener.stop(true);
+        this.bound.delete(key);
+        this.log(`certificate renewed; rebinding ${key} (${entry.route.hostname})`);
+      }
+    }
     const wanted = new Map(routes.map((r) => [routeKey(r), r]));
     const failures: ForwarderStatus["failures"] = [];
 
@@ -186,8 +204,23 @@ export class Forwarder {
   }
 
   /**
-   * The certificate pair, read once and reused by every TLS route. Throws if unreadable — the
-   * caller is inside bind()'s try, so that becomes a recorded per-route failure.
+   * A cheap stamp of the certificate on disk. Renewal rewrites the file, so mtime and size
+   * together are enough to notice — and it costs a stat rather than a read on every reload,
+   * which matters because the routes file is rewritten on every poll.
+   */
+  private tlsStamp(): string {
+    try {
+      const info = statSync(this.certPath);
+      return `${info.mtimeMs}:${info.size}`;
+    } catch {
+      return "";
+    }
+  }
+
+  /**
+   * The certificate pair, read once per renewal and reused by every TLS route. Throws if
+   * unreadable — the caller is inside bind()'s try, so that becomes a recorded per-route
+   * failure rather than taking the process down.
    */
   private tlsMaterial(): { cert: string; key: string } {
     if (!this.tlsCache) {

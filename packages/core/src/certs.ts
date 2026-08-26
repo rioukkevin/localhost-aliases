@@ -37,8 +37,18 @@ export const CA_COMMON_NAME = "Localhost Aliases Local CA";
 /** Apple rejects TLS server certs valid longer than 398 days. Stay under it. */
 export const LEAF_DAYS = 397;
 
-/** Re-issue once the leaf has less than this left, so it never expires while in use. */
+/**
+ * Re-issue once the leaf has less than this left, so it never expires while in use.
+ *
+ * With a 397-day certificate this puts renewal on day 367 — a little under once a year, with
+ * a month of slack. The slack is the point: renewal only happens while the app is running, so
+ * someone who opens it a few times a month still has many chances to catch the window before
+ * anything expires.
+ */
 export const RENEW_BEFORE_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** Day of a certificate's life on which renewal starts being attempted. */
+export const RENEW_ON_DAY = LEAF_DAYS - RENEW_BEFORE_MS / 86_400_000;
 
 async function exists(path: string): Promise<boolean> {
   try {
