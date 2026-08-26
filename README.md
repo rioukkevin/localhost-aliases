@@ -14,6 +14,8 @@ so every project is recognisable at a glance in your browser's tab bar and histo
 - **MCP server** — one-click install for Claude Code and Codex, so your agent knows which
   URL belongs to which project.
 - **Project-local config** — an optional `.localhost-aliases.json` in a repo pins its aliases.
+- **`https://`, optionally** — off by default; one switch in Settings and every alias answers
+  on `https://` too, with `http://` still working.
 
 ## How it works
 
@@ -162,8 +164,9 @@ Aliases end in **`.test`**. It is the default, and three families of TLD are ref
   macOS `mDNSResponder` claims it, and every lookup waits out a multicast query — **about five
   seconds per name, whether or not the name is in `/etc/hosts`**.
 - HSTS-preloaded TLDs are force-upgraded to `https://` by Chrome and Safari before a request is
-  ever sent. Project aliases are `http://` only, so the browser would fail with a TLS error that
-  points nowhere near the real cause.
+  ever sent. Aliases answer on `http://` unless you turn HTTPS on, so the browser would fail
+  with a TLS error that points nowhere near the real cause — and with HTTPS on it would still
+  fail until the local authority is trusted.
 - `.localhost` is resolved to `127.0.0.1` by macOS itself (RFC 6761 §6.3), ignoring
   `/etc/hosts`. Each alias owns its own `127.0.0.x`, so the name would never reach its
   forwarder.
