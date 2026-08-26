@@ -1,23 +1,24 @@
 ### Added
 
-- HTTPS for every alias: switch it on and a certificate is issued for you automatically, and a renewed certificate now takes effect on real traffic.
-- Alias changes are applied for you as you make them, and the admin prompt is asked once per launch instead of once per change.
-- An offline page for aliases whose dev server isn't answering.
-- Stack detection for your projects.
-- An option to start the app at login.
-- A full uninstall you can run from inside the app.
-- A rescan action to pick up projects that changed on disk.
-- Onboarding opens by itself the first time you run the app.
-- A website for the app, with a download page, an FAQ, a list of GitHub releases, and an animated homepage.
+- HTTPS for every alias, with the certificate issued automatically when you turn it on — aliases are no longer http-only.
+- An uninstall option inside the app, so you can remove it entirely from there.
+- Stack detection, so the app recognises what a project runs on.
+- An offline page for an alias whose dev server isn't answering.
+- An option to have the app start at login.
+- Onboarding now opens by itself the first time you launch the app.
+- A website with a download page, an FAQ, an animated homepage and a list of GitHub releases.
 
 ### Fixed
 
-- The forwarder never started when the app was running under the admin prompt, so nothing was served.
-- The packaged app resolved its bundled paths as if it were a development build.
+- A renewed certificate now actually reaches the connection, instead of the previous one staying in use.
+- The forwarder failed to start when the app came up behind the admin prompt.
+- Packaged builds resolved their bundle paths as if they were development builds.
 
 ### Changed
 
-- Aliases now default to `.test` instead of `.local`; `.local` names were costing five seconds on every request.
-- Traffic is forwarded at the TCP level rather than through an HTTP proxy.
-- The app is a single page — a project grid, detail drawers, and status in the corner — replacing the navigation rail, and the drawer is wider.
-- The tray menu lists only aliases that are currently live.
+- Aliases now default to `.test` instead of `.local`, which was adding about five seconds to every request.
+- Traffic is handled by a raw TCP forwarder in place of the old HTTP proxy.
+- The app is one page now — project grid, drawers and status in the corner — and the nav rail is gone.
+- Alias changes are applied for you, and admin rights are requested once per launch rather than per change; the dashboard button raises that prompt through the tray.
+- The tray lists only aliases that are currently live.
+- The project drawer is wider and can rescan.
