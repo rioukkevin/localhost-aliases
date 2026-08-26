@@ -41,8 +41,8 @@ async function curl(args: string[]): Promise<{ out: string; err: string; code: n
 
 /** curl at a TLS route, or throw with curl's own reason. */
 async function tls(args: string[]): Promise<string> {
-  const { out, err, code } = await curl(["--cacert", caPath, ...args]);
-  if (code !== 0) throw new Error(`curl exited ${code}: ${err || "no stderr"}`);
+  const { out, err, code } = await curl(["-v", "--cacert", caPath, ...args]);
+  if (code !== 0) throw new Error(`curl exited ${code}:\n${err || "no stderr"}`);
   return out;
 }
 
@@ -91,6 +91,7 @@ beforeAll(async () => {
   // pattern the rest of the suite already uses (agent-process.test.ts).
   await waitFor(async () => (await httpGet(plainPort, "/plain").catch(() => "")) === "UPSTREAM /plain", {
     timeoutMs: 20_000,
+    stepMs: 250,
     what: "the plain route to answer",
   });
   await waitFor(
@@ -98,7 +99,7 @@ beforeAll(async () => {
       (await tls(["--resolve", `shop.test:${tlsPort}:127.0.0.1`, `https://shop.test:${tlsPort}/hello`]).catch(
         () => "",
       )) === "UPSTREAM /hello",
-    { timeoutMs: 20_000, what: "the tls route to answer" },
+    { timeoutMs: 20_000, stepMs: 250, what: "the tls route to answer" },
   );
 });
 
