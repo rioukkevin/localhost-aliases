@@ -168,6 +168,25 @@ jobs:
           # An empty file is the same as no file to release-notes.ts; keep the tree tidy.
           [ -s dist/RELEASE_NOTES.md ] || rm -f dist/RELEASE_NOTES.md
 
+      # Usually there is nothing left for this job to write: .githooks/pre-push asked the local
+      # `claude` for the notes before the tag was pushed and committed the answer, so the model
+      # has already been paid for once, on a laptop, with no API key involved. This ranks below
+      # an annotated tag's message (a human beats a model) and above generating anything here.
+      - name: Use the release notes the pre-push hook committed, if there are any
+        if: env.IS_TAG == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          COMMITTED="release-notes/$GITHUB_REF_NAME.md"
+          if [ -s dist/RELEASE_NOTES.md ]; then
+            echo "release notes: the annotated tag's message wins; $COMMITTED not consulted"
+          elif [ -s "$COMMITTED" ]; then
+            cp "$COMMITTED" dist/RELEASE_NOTES.md
+            echo "release notes: using committed $COMMITTED"
+          else
+            echo "release notes: no committed notes for $GITHUB_REF_NAME; this job will write them"
+          fi
+
       # Generated notes cost money. A re-run of the same tag restores them instead of paying
       # again; the cache is saved at the end of the job when the key was not already present.
       - name: Restore previously generated release notes

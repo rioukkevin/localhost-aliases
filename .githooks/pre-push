@@ -1,0 +1,139 @@
+#!/bin/sh
+#
+# Release notes, written by claude on this machine, before anything reaches the remote.
+#
+# WHY A HOOK AND NOT CI. The workflow can still write notes with ANTHROPIC_API_KEY, but it
+# only ever runs after a tag is pushed, and it bills an API key to do it. Written here they
+# cost a local `claude` run, land as a committed file, and CI finds them already done:
+# release-notes.ts treats an existing notes file as authoritative and never calls the API.
+#
+# WHAT IT WRITES
+#   pushing a branch  ->  release-notes/unreleased.md   commits since the last tag
+#   pushing v2.1.0    ->  release-notes/v2.1.0.md       commits since the previous tag
+#
+# WHY IT PUSHES, AND WHY YOUR PUSH THEN STOPS. git resolved the refs to push before calling
+# this hook, so a commit made now is not in that push and never can be. Rather than leave you
+# to notice and push a second time, the hook pushes the finished result itself and then exits
+# non-zero so git abandons the stale one. One command in, everything out.
+#
+# ESCAPE HATCHES
+#   LA_NOTES_SKIP=1 git push    skip entirely, push exactly what you asked for
+#   LA_NOTES_HOOK=1             set by the hook on its own push; the recursion guard
+#
+# NOTHING HERE BLOCKS A PUSH ON FAILURE. No claude, no bun, a timeout, a refusal: the hook
+# gets out of the way and your original push proceeds untouched.
+
+set -eu
+
+[ "${LA_NOTES_HOOK:-}" = "1" ] && exit 0
+[ "${LA_NOTES_SKIP:-}" = "1" ] && exit 0
+
+remote="$1"
+ZERO="0000000000000000000000000000000000000000"
+EXIT_CHANGED=10
+
+command -v claude >/dev/null 2>&1 || exit 0
+command -v bun >/dev/null 2>&1 || exit 0
+
+root="$(git rev-parse --show-toplevel)"
+cd "$root"
+
+# The branch a commit would land on. A detached HEAD has no answer, and committing there
+# would strand the notes on no branch at all.
+branch="$(git symbolic-ref --quiet --short HEAD || true)"
+
+out=""
+range=""
+tag=""
+tip=""
+
+# stdin: <local ref> <local oid> <remote ref> <remote oid>, one line per ref being pushed.
+while read -r local_ref local_oid _remote_ref _remote_oid; do
+  [ "$local_oid" = "$ZERO" ] && continue   # a deletion
+
+  case "$local_ref" in
+    refs/tags/*)
+      candidate="${local_ref#refs/tags/}"
+
+      # An annotated tag's message IS the release notes — a person wrote it for this release.
+      # CI gives it the same precedence; re-writing it would overwrite them for no reason.
+      if [ "$(git cat-file -t "$candidate" 2>/dev/null || true)" = "tag" ] &&
+         [ -n "$(git tag -l --format='%(contents)' "$candidate" | sed '/^-----BEGIN PGP/,$d' | tr -d '[:space:]')" ]; then
+        continue
+      fi
+
+      # Already on the remote: the tag cannot be moved onto a notes commit any more, so this
+      # release is CI's to write.
+      if git ls-remote --exit-code --tags "$remote" "$local_ref" >/dev/null 2>&1; then
+        continue
+      fi
+
+      [ -s "release-notes/$candidate.md" ] && continue   # written on an earlier attempt
+
+      tag="$candidate"
+      tip="$candidate"
+      out="release-notes/$tag.md"
+      previous="$(git describe --tags --abbrev=0 "$tag^" 2>/dev/null || true)"
+      range="${previous:+$previous..}$tag"
+      break
+      ;;
+
+    refs/heads/*)
+      # Only the branch actually checked out: a commit lands on HEAD, so pushing some other
+      # branch would put its notes on this one.
+      [ -n "$branch" ] || continue
+      [ "$local_ref" = "refs/heads/$branch" ] || continue
+
+      tip="$local_oid"
+      out="release-notes/unreleased.md"
+      previous="$(git describe --tags --abbrev=0 "$local_oid" 2>/dev/null || true)"
+      range="${previous:+$previous..}$local_oid"
+      ;;
+  esac
+done
+
+[ -n "$out" ] || exit 0
+[ -n "$branch" ] || exit 0   # detached HEAD: nowhere to land the commit
+
+# Whether to run at all is keyed on the COMMITS, not on the text. The model writes slightly
+# different prose every time, so comparing generated notes against the file would make every
+# push look like a change and commit one — for ever, since each notes commit is itself a new
+# commit. The marker records the last commit that touched anything outside release-notes/;
+# while that is unchanged there is genuinely nothing new to say.
+marker="$(git rev-parse --git-dir)/la-notes-tip"
+source_tip="$(git log -1 --format=%H "$tip" -- . ':(exclude)release-notes' 2>/dev/null || true)"
+if [ -s "$out" ] && [ -n "$source_tip" ] && [ "$(cat "$marker" 2>/dev/null || true)" = "$source_tip" ]; then
+  exit 0
+fi
+
+echo "pre-push: writing release notes for $range" >&2
+set +e
+bun run packages/build/write-notes.ts --range "$range" --out "$out" >&2
+status=$?
+set -e
+
+# Anything other than "the file changed" means there is nothing to commit — including every
+# failure path, all of which leave the previous file exactly as it was.
+[ "$status" -eq "$EXIT_CHANGED" ] || exit 0
+
+# Only this path, so anything else you had staged stays staged and unpushed.
+git add -- "$out"
+git commit -q -m "notes: ${tag:-unreleased} release notes" -- "$out"
+printf '%s\n' "$source_tip" > "$marker"
+echo "pre-push: committed $out" >&2
+
+refspecs="refs/heads/$branch"
+if [ -n "$tag" ]; then
+  # The tag was created before the notes commit existed, so it points one commit short of it
+  # and CI would check out a tree without the file. Moving it is safe precisely because the
+  # checks above proved it is lightweight and not yet on the remote.
+  git tag -f "$tag" HEAD >/dev/null
+  refspecs="$refspecs refs/tags/$tag"
+  echo "pre-push: moved $tag onto the notes commit" >&2
+fi
+
+# shellcheck disable=SC2086
+LA_NOTES_HOOK=1 git push "$remote" $refspecs >&2
+
+echo "pre-push: pushed $refspecs — your original push is stopped, it is already done." >&2
+exit 1

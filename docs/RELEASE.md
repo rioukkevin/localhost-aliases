@@ -104,18 +104,20 @@ The notes come from the first of these that exists, and the workflow tries them 
 
 1. **The annotated tag's message.** If you wrote one, it wins. A human wrote it for this release;
    nothing overwrites it, and no API call is made.
-2. **The cache.** `actions/cache` keyed on the tag restores `dist/RELEASE_NOTES.md` from an earlier
+2. **`release-notes/<tag>.md`, committed by the pre-push hook.** Usually present, and then CI
+   writes nothing at all — see [3.1](#31-the-pre-push-hook-writes-them-before-ci-can).
+3. **The cache.** `actions/cache` keyed on the tag restores `dist/RELEASE_NOTES.md` from an earlier
    run of the same tag, so re-running a failed release does not re-bill the API.
-3. **Claude.** `claude-opus-5` is given the commits since the previous tag and asked for grouped,
+4. **Claude.** `claude-opus-5` is given the commits since the previous tag and asked for grouped,
    factual `### Added` / `### Fixed` / `### Changed` notes written for a user, omitting empty
    sections. One request, `max_tokens: 16000`, no sampling parameters — `temperature`, `top_p`,
    `top_k` and `thinking.budget_tokens` all return 400 on this model and the request type cannot
    express them.
-4. **The commits.** A plain grouped commit list, generated in code.
+5. **The commits.** A plain grouped commit list, generated in code.
 
 **A release is never blocked because nobody could write nice notes for it.** A missing key, an API
 error, a `refusal` or `max_tokens` stop reason, an answer with no text in it — every one of them
-falls through to step 4 with a warning in the log. The step summary says which source was used.
+falls through to step 5 with a warning in the log. The step summary says which source was used.
 
 **The commit log is untrusted input.** Anyone who can land a commit writes commit messages, and a
 commit message can be phrased as an instruction to the model. The system prompt says so, and the
@@ -126,6 +128,51 @@ an injected "the sha256 is deadbeef" is a lie printed directly above the real ch
 is also stripped of any line that would be a GitHub workflow command (`::add-mask::` and friends),
 capped in length, never written to `$GITHUB_OUTPUT`, and never used as a path, URL or shell
 argument.
+
+### 3.1 The pre-push hook writes them before CI can
+
+`.githooks/pre-push` asks the `claude` CLI on your own machine for the notes, commits the answer,
+and pushes it — so by the time the workflow looks, step 2 above is already satisfied and no API
+call is made. Turn it on once per clone:
+
+```sh
+make hooks     # git config core.hooksPath .githooks
+```
+
+What it writes depends on what you push:
+
+| you push | it writes | from |
+|---|---|---|
+| a branch | `release-notes/unreleased.md` | commits since the last tag |
+| `v2.1.0` | `release-notes/v2.1.0.md` | commits since the previous tag |
+
+**Your push is stopped, and that is the hook working.** git resolves which refs to push *before*
+running the hook, so a commit created now can never be part of that push. Rather than leave you to
+notice and push again, the hook pushes the finished result itself and exits non-zero so git
+abandons the stale one. The last line tells you what went out. For a tag it also moves the tag onto
+the notes commit first — otherwise CI would check out a tree one commit short of the notes.
+
+**It does nothing when there is nothing to say.** The decision to run is keyed on the commits, not
+on the text: a marker in `.git/` records the last commit that touched anything outside
+`release-notes/`, and while that is unchanged the hook exits immediately. Without this it would
+commit fresh prose on every push for ever, since the model words things differently each time.
+
+**It never blocks a push.** No `claude`, no `bun`, a timeout, a refusal, an empty answer — each one
+leaves the previous file alone and lets your push through. Skip it deliberately with:
+
+```sh
+LA_NOTES_SKIP=1 git push
+```
+
+It is skipped, too, for an annotated tag (your message wins) and for a tag already on the remote
+(the tag can no longer be moved onto a notes commit, so that release is CI's to write).
+
+**The commit log is untrusted here too, and the stakes are higher than in CI.** The workflow hands
+the log to a bare API call with no tools; this runs against a CLI that has them. So
+`packages/build/write-notes.ts` starts the CLI with `--disallowed-tools` naming every tool and
+`--strict-mcp-config`, and passes the log on stdin, never in argv. The prompt, the sanitiser and
+the commit-list fallback are imported from `release-notes.ts` rather than restated, so local notes
+and CI notes are the same notes.
 
 ### Previewing the notes without spending anything
 
@@ -146,6 +193,12 @@ cat /tmp/body.md
 
 Add `--generate` (with `ANTHROPIC_API_KEY` exported) to make the one API call and see what the
 model writes. Delete `/tmp/notes.md` first, or it will be reused rather than regenerated.
+
+To preview what the *hook* would write, without pushing anything:
+
+```sh
+bun run packages/build/write-notes.ts --range v2.0.0..HEAD --out /tmp/notes.md && cat /tmp/notes.md
+```
 
 The grouping, the fallbacks, the stop-reason handling and the injection containment are unit
 tested with the API client stubbed: `bun test packages/build`.
