@@ -1,65 +1,45 @@
 import { formatDate, formatSize, getLatestRelease } from "../../lib/releases.ts";
 import { shortSha } from "../format.ts";
-import { GITHUB_URL } from "../site/links.ts";
 import { Chip } from "../ui/Chip.tsx";
-import { CodeBlock } from "../ui/CodeBlock.tsx";
 import { IconDownload } from "../ui/Icons.tsx";
 import { LinkButton } from "../ui/LinkButton.tsx";
 
-const SOURCE_BUILD = [
-  "git clone https://github.com/rioukkevin/localhost-aliases",
-  "cd localhost-aliases",
-  "bun install",
-  "make bundle    # builds dist/LocalhostAliases.app",
-  "make install   # copies it into /Applications",
-].join("\n");
-
 /**
- * The one call to action. Reads the release manifest CI publishes; when there is
- * none — which is the state today — it offers the only thing that actually exists,
- * a source build, instead of a button that would 404.
+ * The one call to action, in both of its states.
+ *
+ * Whatever the GitHub API says, this renders exactly one accent button, because
+ * a page with two equally-weighted things to click has none. When there is no
+ * published `.dmg` — a release whose upload failed, a notes-only tag, or no
+ * release the API will show us at all — the button points at the download page,
+ * where the source build has room to be explained properly. The commands
+ * themselves do not belong in a hero.
  */
 export async function DownloadButton() {
   const release = await getLatestRelease();
+  const dmg = release?.dmg ?? null;
 
-  // `dmg` is nullable now that releases come from GitHub: a release can exist with no disk
-  // image attached (a failed upload, a notes-only tag). Both cases show the source build
-  // rather than a button with nothing behind it.
-  if (!release || !release.dmg) {
+  if (release === null || dmg === null) {
     return (
-      <div className="border border-hairline-strong bg-raised">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-hairline px-4 py-3">
-          <Chip tone="down" dot>
-            No download published yet
-          </Chip>
-          <p className="max-w-xl text-[12.5px] leading-relaxed text-muted">
-            There is no signed or notarized build to download. Build it from source — nothing on
-            your system changes until you launch it and accept the prompt. Apple Silicon only.
-          </p>
-        </div>
+      <div className="flex flex-col items-start gap-3">
+        <LinkButton href="/download" size="lg" variant="primary">
+          Build it from source
+        </LinkButton>
 
-        <div className="px-4 py-4">
-          <CodeBlock value={SOURCE_BUILD} what="commands" label="build from source" />
-          <p className="mt-3 text-[12px] leading-relaxed text-faint">
-            Needs Bun 1.2.5+ and the Xcode command line tools (<span className="mono">swiftc</span>).{" "}
-            <span className="mono">make uninstall</span> reverses every change, including the{" "}
-            <span className="mono">/etc/hosts</span> block.
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <Chip dot tone="down">
+            no signed build yet
+          </Chip>
+          <p className="text-[12px] leading-relaxed text-faint">
+            Five commands, on the download page. Apple Silicon, macOS 13+.
           </p>
-          <div className="mt-4">
-            <LinkButton href={GITHUB_URL} size="md">
-              View the source
-            </LinkButton>
-          </div>
         </div>
       </div>
     );
   }
 
-  const dmg = release.dmg;
-
   return (
     <div className="flex flex-col items-start gap-3">
-      <LinkButton href={dmg.url} variant="primary" size="lg" external>
+      <LinkButton external href={dmg.url} size="lg" variant="primary">
         <IconDownload />
         Download {release.version}
       </LinkButton>

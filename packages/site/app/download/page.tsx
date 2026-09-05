@@ -15,7 +15,7 @@ import { Inline } from "../docs/blocks.tsx";
 
 export const metadata: Metadata = {
   title: "Download",
-  description: `Localhost Aliases for macOS ${MINIMUM_MACOS}+ on ${ARCHITECTURE}. The .dmg with its size and sha256, what Gatekeeper will say, and how to build it from source while no release is published.`,
+  description: `Localhost Aliases for macOS ${MINIMUM_MACOS}+ on ${ARCHITECTURE}. The .dmg with its size and sha256, what Gatekeeper will say, and how to build it from source instead.`,
   alternates: { canonical: "/download" },
 };
 
@@ -32,10 +32,10 @@ const REQUIREMENTS = [
 /**
  * The download page.
  *
- * Three states, and the third is today's: a release with a `.dmg`, a release whose `.dmg` is
- * missing (an upload that failed, a notes-only tag), and no release at all — which is what
- * the GitHub API actually answers for this repository right now. None of them shows a button
- * that would 404, and none of them claims a signature that does not exist.
+ * Three states: a release with a `.dmg`, a release whose `.dmg` is missing (an upload that
+ * failed, a notes-only tag), and no release at all — which is also what the API answers when
+ * it cannot see the repository. None of them shows a button that would 404, and none of them
+ * claims a signature that does not exist.
  */
 export default async function DownloadPage() {
   const release = await getLatestRelease();
@@ -154,8 +154,9 @@ export default async function DownloadPage() {
               <span className="mono">make uninstall</span> takes the other two back out.
             </p>
             <p className="max-w-2xl text-[13px] leading-relaxed text-muted">
-              Project aliases are <span className="mono">http://</span> only — the forwarder moves raw bytes and never
-              parses them, so nothing in that path could terminate TLS. The{" "}
+              Aliases answer over <span className="mono">http://</span> always, and over{" "}
+              <span className="mono">https://</span> too once you switch it on: each alias owns its own address, so
+              the listener already knows which certificate to present and still never reads a byte. The{" "}
               <Link className={LINK} href="/faq#what-runs-as-root">
                 FAQ
               </Link>{" "}

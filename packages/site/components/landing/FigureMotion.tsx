@@ -1,67 +1,63 @@
 /**
- * Motion for the explanatory figures, shipped with the figures rather than in
- * globals.css so the graphics stay one self-contained unit.
+ * Motion for the homepage graphics, shipped with them rather than in globals.css
+ * so the figures stay one self-contained unit.
  *
  * The rule every keyframe below obeys: **the markup already paints the still
  * picture, and an animation only deviates from it.** Nothing is positioned,
- * revealed or coloured by JavaScript, so the figures are complete on the server;
- * with scripting off, with animations killed, or on the very first painted frame,
- * a reader sees the same legible diagram. That is also why the reduced-motion
- * block can simply say `animation: none` — there is nothing to fall back to,
- * because the resting state *is* the fallback.
+ * revealed or coloured by JavaScript, so with scripting off, with animations
+ * killed, or on the very first painted frame, a reader sees the same legible
+ * diagram. That is also why the reduced-motion block can simply say
+ * `animation: none` — the resting state *is* the fallback.
  */
 const CSS = `
-/* A browser tab being clicked, then let go of. Five tabs share one 7s cycle with
-   staggered delays, so exactly one is "open" at a time and the scan reads as
-   hunting rather than as a light show. Resting state: none of them highlighted,
-   which is the point the figure is making. */
-@keyframes la-probe {
-  0%, 3% {
-    border-color: var(--hairline);
-    background: var(--sunken);
-    color: var(--muted);
+/* The hero's left-hand side: one port replaced by the next, hard cut rather than
+   crossfaded, because that is what actually happens to a port number. Four share
+   one 8s cycle on 2s delays, so exactly one is on screen at a time. At rest the
+   first one is simply the one showing — nothing overlaps. */
+@keyframes la-port {
+  0%, 25% {
+    opacity: 1;
   }
-  7%, 15% {
-    border-color: var(--hairline-strong);
-    background: var(--raised);
-    color: var(--ink);
-  }
-  19%, 100% {
-    border-color: var(--hairline);
-    background: var(--sunken);
-    color: var(--muted);
+  25.01%, 100% {
+    opacity: 0;
   }
 }
 
-.la-probe {
-  animation: la-probe 7s ease-in-out infinite;
+.la-port {
+  grid-area: 1 / 1;
+  opacity: 0;
+  animation: la-port 8s linear infinite;
 }
 
-/* Bytes on a cable. It leaves the left jack, arrives at the right one and fades,
-   9px in at each end so it starts and stops exactly at the jacks PatchCable
-   draws. Invisible at rest (opacity 0), so a frozen frame is just the cable. */
-@keyframes la-packet {
+.la-port:first-child {
+  opacity: 1;
+}
+
+/* A request falling down the chain: it leaves the jack above, arrives at the one
+   below and fades. 7px in at each end, so it starts and stops exactly on the
+   jacks the rail draws. Invisible at rest, so a frozen frame is just the cable. */
+@keyframes la-drop {
   0% {
-    left: 9px;
+    top: 7px;
     opacity: 0;
   }
-  6% {
+  12% {
     opacity: 1;
   }
-  30% {
-    left: calc(100% - 9px);
+  58% {
+    top: calc(100% - 7px);
     opacity: 1;
   }
-  38%, 100% {
-    left: calc(100% - 9px);
+  72%, 100% {
+    top: calc(100% - 7px);
     opacity: 0;
   }
 }
 
-.la-packet {
+.la-drop {
   position: absolute;
-  top: 50%;
-  left: 9px;
+  left: 50%;
+  top: 7px;
   width: 5px;
   height: 5px;
   margin-top: -2.5px;
@@ -69,7 +65,33 @@ const CSS = `
   border-radius: 9999px;
   background: var(--live);
   opacity: 0;
-  animation: la-packet 5.2s linear infinite;
+  animation: la-drop 2.6s linear infinite;
+}
+
+/* A browser tab being clicked, then let go of. Four tabs share one 6s cycle on
+   staggered delays, so exactly one is "open" at a time and the scan reads as
+   hunting rather than as a light show. Resting state: none of them highlighted,
+   which is the point the tile is making. */
+@keyframes la-probe {
+  0%, 4% {
+    border-color: var(--hairline);
+    background: var(--sunken);
+    color: var(--muted);
+  }
+  9%, 20% {
+    border-color: var(--hairline-strong);
+    background: var(--raised);
+    color: var(--ink);
+  }
+  25%, 100% {
+    border-color: var(--hairline);
+    background: var(--sunken);
+    color: var(--muted);
+  }
+}
+
+.la-probe {
+  animation: la-probe 6s ease-in-out infinite;
 }
 
 /* One-shot entrances for the lines a privileged apply writes. They run once on
@@ -98,16 +120,18 @@ const CSS = `
 
 /* The global kill switch in globals.css already collapses these to a single
    0.001ms run, which lands on the resting state. This is the explicit version of
-   the same promise: no motion at all, and the packet — the one element whose
-   whole job is to move — is removed rather than parked. */
+   the same promise: no motion at all, and the two elements whose whole job is to
+   move — the falling packet and the cycling port — are removed or parked rather
+   than left mid-flight. */
 @media (prefers-reduced-motion: reduce) {
   .la-probe,
   .la-reveal,
-  .la-bar {
+  .la-bar,
+  .la-port {
     animation: none !important;
   }
 
-  .la-packet {
+  .la-drop {
     display: none !important;
   }
 }

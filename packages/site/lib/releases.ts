@@ -6,11 +6,11 @@
  *
  * Three things this file exists to guarantee:
  *
- * 1. IT NEVER THROWS. `null` / `[]` is a valid answer and today it is the REAL one: the repo
- *    has no tags and no releases, and unauthenticated the API answers 404 for both endpoints.
- *    Every page renders that state on purpose, so a 404, a 403 rate-limit (60 req/hr per IP
- *    unauthenticated), a network error, malformed JSON, a release with no `.dmg` attached or
- *    one whose body carries no checksum all resolve to the same quiet empty answer.
+ * 1. IT NEVER THROWS. `null` / `[]` is a valid answer, and every page renders that state on
+ *    purpose: a 404 (no releases yet, or a repo that is private to the caller), a 403
+ *    rate-limit (60 req/hr per IP unauthenticated), a network error, malformed JSON, a release
+ *    with no `.dmg` attached or one whose body carries no checksum all resolve to the same
+ *    quiet empty answer.
  * 2. IT VALIDATES BEFORE IT TRUSTS. A release body and an asset URL are remote input that
  *    ends up in a page; a `javascript:` asset URL or a 400kB body must not reach the DOM.
  * 3. IT DOES NOT BURN THE RATE LIMIT. Every request carries Next's `revalidate` (300s) so a
@@ -242,7 +242,7 @@ export function parseReleaseList(value: unknown): Release[] {
 /**
  * The newest published, non-prerelease release, or `null` when there is none. GitHub's
  * `/releases/latest` already excludes drafts and prereleases; it answers 404 when the repo has
- * never published one, which is exactly today's state.
+ * never published one — and, to an unauthenticated caller, when the repo is private.
  */
 export async function getLatestRelease(): Promise<Release | null> {
   const path = `/repos/${RELEASES_OWNER}/${RELEASES_REPO}/releases/latest`;

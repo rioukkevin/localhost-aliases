@@ -70,3 +70,13 @@ export function IconDownload(props: IconProps) {
     </Svg>
   );
 }
+
+/** A closed padlock. The only place the site claims TLS, so it is drawn shut. */
+export function IconLock(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="3.5" y="7" width="9" height="6.5" rx="1" />
+      <path d="M5.75 7V5.25a2.25 2.25 0 0 1 4.5 0V7" />
+    </Svg>
+  );
+}
